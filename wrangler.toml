@@ -6,12 +6,12 @@ name = "kvideo"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+account_id = "1257ea16508eb7649f32a7c005d7f00b"
+
 # KV Namespace for Admin Account Storage
-# Create in Cloudflare Dashboard: Workers & Pages > KV > Create Namespace "KV_ACCOUNTS"
-# Then bind it below with the correct ID
 [[kv_namespaces]]
 binding = "KV_ACCOUNTS"
-id = "" # ← 替换为你的 KV Namespace ID
+id = "bdf9894fb8774fb1a4cb1ec3413d5494"
 
 [vars]
 # Environment variables can be set here or in Cloudflare Dashboard
