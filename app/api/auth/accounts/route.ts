@@ -4,14 +4,15 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getEnvVar, hasEnvVar } from '@/lib/env';
 
 export const runtime = 'edge';
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || '';
-const ACCOUNTS = process.env.ACCOUNTS || '';
+function getAdminPassword(): string { return getEnvVar('ADMIN_PASSWORD'); }
+function getAccessPassword(): string { return getEnvVar('ACCESS_PASSWORD'); }
+function getAccountsStr(): string { return getEnvVar('ACCOUNTS'); }
 
-const effectiveAdminPassword = ADMIN_PASSWORD || ACCESS_PASSWORD;
+const effectiveAdminPassword = getAdminPassword() || getAccessPassword();
 
 interface AccountInfo {
   name: string;
@@ -21,6 +22,7 @@ interface AccountInfo {
 
 function getAccountList(): AccountInfo[] {
   const accounts: AccountInfo[] = [];
+  const ACCOUNTS = getAccountsStr();
 
   // Add admin from ADMIN_PASSWORD
   if (effectiveAdminPassword) {
@@ -54,6 +56,7 @@ function getAccountList(): AccountInfo[] {
 
 export async function GET() {
   const accounts = getAccountList();
+  const ACCOUNTS = getAccountsStr();
 
   return NextResponse.json({
     accounts,

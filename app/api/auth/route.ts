@@ -5,20 +5,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getEnvVar } from '@/lib/env';
 
 export const runtime = 'edge';
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || '';
-const ACCOUNTS = process.env.ACCOUNTS || '';
-const PREMIUM_PASSWORD = process.env.PREMIUM_PASSWORD || 'l789789';
-const PERSIST_SESSION = process.env.PERSIST_SESSION !== 'false'; // default true
-const SUBSCRIPTION_SOURCES = process.env.SUBSCRIPTION_SOURCES || process.env.NEXT_PUBLIC_SUBSCRIPTION_SOURCES || '';
-const IPTV_SOURCES = process.env.IPTV_SOURCES || process.env.NEXT_PUBLIC_IPTV_SOURCES || '';
-const MERGE_SOURCES = process.env.MERGE_SOURCES || process.env.NEXT_PUBLIC_MERGE_SOURCES || '';
+// Lazy env var reads — process.env is unavailable in Cloudflare Pages
+// Edge runtime at module scope, so we read them on demand inside handlers
+function getAdminPassword(): string { return getEnvVar('ADMIN_PASSWORD'); }
+function getAccessPassword(): string { return getEnvVar('ACCESS_PASSWORD'); }
+function getAccountsStr(): string { return getEnvVar('ACCOUNTS'); }
+function getPremiumPassword(): string { return getEnvVar('PREMIUM_PASSWORD'); }
+function getPersistSession(): boolean { return getEnvVar('PERSIST_SESSION') !== 'false'; }
+function getSubscriptionSources(): string { return getEnvVar('SUBSCRIPTION_SOURCES') || getEnvVar('NEXT_PUBLIC_SUBSCRIPTION_SOURCES'); }
+function getIptvSources(): string { return getEnvVar('IPTV_SOURCES') || getEnvVar('NEXT_PUBLIC_IPTV_SOURCES'); }
+function getMergeSources(): string { return getEnvVar('MERGE_SOURCES') || getEnvVar('NEXT_PUBLIC_MERGE_SOURCES'); }
 
 // Backward compat: ACCESS_PASSWORD acts as ADMIN_PASSWORD if ADMIN_PASSWORD is not set
-const effectiveAdminPassword = ADMIN_PASSWORD || ACCESS_PASSWORD;
+function getEffectiveAdminPassword(): string { return getAdminPassword() || getAccessPassword(); }
 
 interface AccountEntry {
   password: string;
@@ -28,6 +31,7 @@ interface AccountEntry {
 }
 
 function parseAccounts(): AccountEntry[] {
+  const ACCOUNTS = getAccountsStr();
   if (!ACCOUNTS) return [];
 
   return ACCOUNTS.split(',')
@@ -104,6 +108,8 @@ async function checkDynamicAccounts(password: string): Promise<AccountEntry | nu
 }
 
 export async function GET() {
+  const effectiveAdminPassword = getEffectiveAdminPassword();
+  const ACCOUNTS = getAccountsStr();
   const hasAuth = !!(effectiveAdminPassword || ACCOUNTS);
 
   // Also check if there are dynamic accounts
@@ -115,11 +121,11 @@ export async function GET() {
 
   return NextResponse.json({
     hasAuth: hasAuth || hasDynamicAuth,
-    hasPremiumAuth: !!(PREMIUM_PASSWORD || hasDynamicAuth),
-    persistSession: PERSIST_SESSION,
-    subscriptionSources: SUBSCRIPTION_SOURCES,
-    iptvSources: IPTV_SOURCES,
-    mergeSources: MERGE_SOURCES,
+    hasPremiumAuth: !!(getPremiumPassword() || hasDynamicAuth),
+    persistSession: getPersistSession(),
+    subscriptionSources: getSubscriptionSources(),
+    iptvSources: getIptvSources(),
+    mergeSources: getMergeSources(),
   });
 }
 
@@ -130,6 +136,9 @@ export async function POST(request: NextRequest) {
     if (!password || typeof password !== 'string') {
       return NextResponse.json({ valid: false, message: 'Password required' }, { status: 400 });
     }
+
+    const PREMIUM_PASSWORD = getPremiumPassword();
+    const effectiveAdminPassword = getEffectiveAdminPassword();
 
     // Dynamic premium password (set via admin panel)
     const dynamicPremiumPwd = await getDynamicPremiumPassword();
@@ -180,7 +189,7 @@ export async function POST(request: NextRequest) {
         name: '管理员',
         role: 'super_admin',
         profileId,
-        persistSession: PERSIST_SESSION,
+        persistSession: getPersistSession(),
       });
     }
 
@@ -194,7 +203,7 @@ export async function POST(request: NextRequest) {
           name: account.name,
           role: account.role,
           profileId,
-          persistSession: PERSIST_SESSION,
+          persistSession: getPersistSession(),
           customPermissions: account.customPermissions.length > 0 ? account.customPermissions : undefined,
         });
       }
@@ -209,7 +218,7 @@ export async function POST(request: NextRequest) {
         name: dynamicAccount.name,
         role: dynamicAccount.role,
         profileId,
-        persistSession: PERSIST_SESSION,
+        persistSession: getPersistSession(),
       });
     }
 

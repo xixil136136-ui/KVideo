@@ -7,6 +7,7 @@
  */
 
 import type { AdminAccount, AdminConfig } from '@/lib/types/admin';
+import { getEnvVar } from '@/lib/env';
 
 const ACCOUNTS_KEY = 'kvideo_admin_accounts';
 const CONFIG_KEY = 'kvideo_admin_config';
@@ -21,8 +22,14 @@ function getKVBinding(): any | null {
   try {
     // @ts-ignore - Cloudflare Pages binding
     if (typeof KV_ACCOUNTS !== 'undefined') return KV_ACCOUNTS;
-    // @ts-ignore - Cloudflare Workers binding via env
-    if (typeof process !== 'undefined' && (process as any).env?.KV_ACCOUNTS) return (process as any).env.KV_ACCOUNTS;
+    // @ts-ignore - Cloudflare Workers binding via getRequestContext
+    if (typeof EdgeRuntime !== 'undefined') {
+      const { getRequestContext } = require('@cloudflare/next-on-pages');
+      const ctx = getRequestContext();
+      if (ctx && ctx.env && ctx.env.KV_ACCOUNTS) return ctx.env.KV_ACCOUNTS;
+    }
+    // @ts-ignore - process.env fallback
+    if (typeof process !== 'undefined' && process.env?.KV_ACCOUNTS) return process.env.KV_ACCOUNTS;
   } catch {}
   return null;
 }
@@ -104,7 +111,7 @@ async function seedAccounts(): Promise<void> {
   const existing = await getAccounts();
 
   // Seed from ACCOUNTS env var (format: password:name:role,password2:name2:role2)
-  const accountsEnv = process.env.ACCOUNTS || '';
+  const accountsEnv = getEnvVar('ACCOUNTS');
   if (accountsEnv && existing.length === 0) {
     const entries = accountsEnv.split(',').map(e => e.trim()).filter(Boolean);
     for (const entry of entries) {
@@ -124,7 +131,7 @@ async function seedAccounts(): Promise<void> {
   }
 
   // Seed admin from ADMIN_PASSWORD env var if no accounts exist
-  const adminPwd = process.env.ADMIN_PASSWORD || process.env.ACCESS_PASSWORD || '';
+  const adminPwd = getEnvVar('ADMIN_PASSWORD') || getEnvVar('ACCESS_PASSWORD');
   if (adminPwd && (await getAccounts()).length === 0) {
     const account: AdminAccount = {
       id: 'admin-default',
@@ -138,8 +145,8 @@ async function seedAccounts(): Promise<void> {
   }
 
   // Save config
-  const premiumPwd = process.env.PREMIUM_PASSWORD || '';
-  const adminPwdActual = process.env.ADMIN_PASSWORD || process.env.ACCESS_PASSWORD || '';
+  const premiumPwd = getEnvVar('PREMIUM_PASSWORD');
+  const adminPwdActual = getEnvVar('ADMIN_PASSWORD') || getEnvVar('ACCESS_PASSWORD');
   if (adminPwdActual || premiumPwd) {
     await saveConfig({
       adminPassword: adminPwdActual,
@@ -247,8 +254,9 @@ export async function saveConfig(config: AdminConfig): Promise<void> {
 }
 
 export async function updatePremiumPassword(newPassword: string): Promise<void> {
+  const adminPwd = getEnvVar('ADMIN_PASSWORD') || getEnvVar('ACCESS_PASSWORD');
   const config = (await getConfig()) || {
-    adminPassword: process.env.ADMIN_PASSWORD || process.env.ACCESS_PASSWORD || '',
+    adminPassword: adminPwd,
     premiumPassword: '',
   };
   config.premiumPassword = newPassword;

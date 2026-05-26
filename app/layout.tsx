@@ -8,6 +8,7 @@ import { TVProvider } from "@/lib/contexts/TVContext";
 import { TVNavigationInitializer } from "@/components/TVNavigationInitializer";
 import { Analytics } from "@vercel/analytics/react";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { getEnvVar, hasEnvVar } from "@/lib/env";
 import { PasswordGate } from "@/components/PasswordGate";
 import { siteConfig } from "@/lib/config/site-config";
 import { AdKeywordsInjector } from "@/components/AdKeywordsInjector";
@@ -24,7 +25,7 @@ async function AdKeywordsWrapper() {
 
   try {
     // 1. Try reading from file (Docker runtime support)
-    const keywordsFile = process.env.AD_KEYWORDS_FILE;
+    const keywordsFile = getEnvVar('AD_KEYWORDS_FILE');
     if (keywordsFile) {
       // Resolve absolute path or relative to CWD
       const filePath = path.isAbsolute(keywordsFile)
@@ -45,7 +46,7 @@ async function AdKeywordsWrapper() {
 
     // 2. Fallback to Env var (Runtime or Build time)
     if (keywords.length === 0) {
-      const envKeywords = process.env.AD_KEYWORDS || process.env.NEXT_PUBLIC_AD_KEYWORDS;
+      const envKeywords = getEnvVar('AD_KEYWORDS') || getEnvVar('NEXT_PUBLIC_AD_KEYWORDS');
       if (envKeywords) {
         keywords = envKeywords.split(/[\n,]/).map((k: string) => k.trim()).filter((k: string) => k);
       }
@@ -106,7 +107,7 @@ export default function RootLayout({
 
           <TVProvider>
             <TVNavigationInitializer />
-            <PasswordGate hasAuth={!!(process.env.ADMIN_PASSWORD || process.env.ACCOUNTS || process.env.ACCESS_PASSWORD)}>
+            <PasswordGate hasAuth={!!(hasEnvVar('ADMIN_PASSWORD') || hasEnvVar('ACCOUNTS') || hasEnvVar('ACCESS_PASSWORD'))}>
               <AdKeywordsWrapper />
               {children}
               <BackToTop />
