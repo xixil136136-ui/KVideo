@@ -210,17 +210,20 @@ export async function POST(request: NextRequest) {
     }
 
     // 3. Check dynamic admin-storage accounts
-    const dynamicAccount = await checkDynamicAccounts(password);
-    if (dynamicAccount) {
-      const profileId = await generateProfileId(password);
-      return NextResponse.json({
-        valid: true,
-        name: dynamicAccount.name,
-        role: dynamicAccount.role,
-        profileId,
-        persistSession: getPersistSession(),
-      });
-    }
+    try {
+      const { verifyAccount } = await import('@/lib/admin-storage');
+      const found = await verifyAccount(password);
+      if (found) {
+        const profileId = await generateProfileId(password);
+        return NextResponse.json({
+          valid: true,
+          name: found.name,
+          role: found.role,
+          profileId,
+          persistSession: getPersistSession(),
+        });
+      }
+    } catch {}
 
     // 4. No match
     return NextResponse.json({ valid: false });

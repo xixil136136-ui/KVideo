@@ -10,13 +10,9 @@ pages_build_output_dir = ".vercel/output/static"
 # account_id = "1257ea16508eb7649f32a7c005d7f00b"
 
 # KV Namespace for Admin Account Storage
-# Pages KV bindings must be configured via Cloudflare Dashboard:
-# Project → Settings → Functions → KV namespace bindings
-# KV namespace id: bdf9894fb8774fb1a4cb1ec3413d5494
-# Binding name: KV_ACCOUNTS
-# [[kv_namespaces]]
-# binding = "KV_ACCOUNTS"
-# id = "bdf9894fb8774fb1a4cb1ec3413d5494"
+[[kv_namespaces]]
+binding = "KV_ACCOUNTS"
+id = "bdf9894fb8774fb1a4cb1ec3413d5494"
 
 [vars]
 ADMIN_PASSWORD = "lys789789"
