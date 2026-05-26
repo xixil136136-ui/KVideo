@@ -3,6 +3,9 @@
  * Works in both Cloudflare Pages Edge Runtime and local Node.js.
  */
 
+// EdgeRuntime is a Cloudflare Pages global — declared for TypeScript
+declare var EdgeRuntime: string | undefined;
+
 export function getEnvVar(name: string): string {
   // Cloudflare Pages Edge Runtime — use getRequestContext
   try {
