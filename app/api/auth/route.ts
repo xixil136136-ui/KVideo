@@ -184,6 +184,11 @@ export async function POST(request: NextRequest) {
     // 1. Check admin password (env var)
     if (effectiveAdminPassword && password === effectiveAdminPassword) {
       const profileId = await generateProfileId(password);
+      // Seed KV with this admin account on first login
+      try {
+        const { verifyAccount } = await import('@/lib/admin-storage');
+        await verifyAccount(password);
+      } catch {}
       return NextResponse.json({
         valid: true,
         name: '管理员',
