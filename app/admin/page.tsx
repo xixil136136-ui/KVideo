@@ -24,7 +24,7 @@ export default function AdminPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/admin/auth', {
+      const res = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
@@ -32,9 +32,10 @@ export default function AdminPage() {
       const data = await res.json();
 
       if (data.valid) {
-        sessionStorage.setItem('kvideo-admin-session', JSON.stringify(data.session));
-        sessionStorage.setItem('kvideo-admin-token', data.sessionToken);
-        setSession(data.session);
+        const sessionInfo = { name: data.name, role: data.role, profileId: data.profileId };
+        sessionStorage.setItem('kvideo-admin-session', JSON.stringify(sessionInfo));
+        sessionStorage.setItem('kvideo-admin-token', data.profileId || '');
+        setSession(sessionInfo);
         setPassword('');
       } else {
         setError(data.message || '登录失败');
