@@ -18,5 +18,6 @@ pages_build_output_dir = ".vercel/output/static"
 # binding = "KV_ACCOUNTS"
 # id = "bdf9894fb8774fb1a4cb1ec3413d5494"
 
-# Environment variables (secrets) are set via Cloudflare Dashboard or wrangler pages secret put
-# ADMIN_PASSWORD and PREMIUM_PASSWORD are already set as secrets
+[vars]
+ADMIN_PASSWORD = "lys789789"
+PREMIUM_PASSWORD = "lys789789"
