@@ -1,16 +1,17 @@
 /**
  * Auth API Route
  * Handles authentication with role-based accounts
+ * Supports both env var accounts and dynamic admin-storage accounts
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || '';
+const ADMIN_PASSWORD=proces...WORD || '';
+const ACCESS_PASSWORD=proces...WORD || '';
 const ACCOUNTS = process.env.ACCOUNTS || '';
-const PREMIUM_PASSWORD = process.env.PREMIUM_PASSWORD || 'l789789';
+const PREMIUM_PASSWORD=proces...WORD || 'l789789';
 const PERSIST_SESSION = process.env.PERSIST_SESSION !== 'false'; // default true
 const SUBSCRIPTION_SOURCES = process.env.SUBSCRIPTION_SOURCES || process.env.NEXT_PUBLIC_SUBSCRIPTION_SOURCES || '';
 const IPTV_SOURCES = process.env.IPTV_SOURCES || process.env.NEXT_PUBLIC_IPTV_SOURCES || '';
@@ -63,12 +64,58 @@ async function generateProfileId(password: string): Promise<string> {
   return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Try to load dynamic admin-storage accounts.
+ * Falls back gracefully if module not available (e.g., build time).
+ */
+async function getDynamicAccounts(): Promise<AccountEntry[]> {
+  try {
+    const { getAccounts } = await import('@/lib/admin-storage');
+    const adminAccounts = await getAccounts();
+    return adminAccounts.map(a => ({
+      password: a.password,
+      name: a.name,
+      role: a.role as 'super_admin' | 'admin' | 'viewer',
+      customPermissions: [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the dynamic premium password from admin-storage.
+ */
+async function getDynamicPremiumPassword(): Promise<string | null> {
+  try {
+    const { getConfig } = await import('@/lib/admin-storage');
+    const config = await getConfig();
+    if (config?.premiumPassword) return config.premiumPassword;
+  } catch {}
+  return null;
+}
+
+/**
+ * Check if any dynamic account matches the given password.
+ */
+async function checkDynamicAccounts(password: string): Promise<AccountEntry | null> {
+  const accounts = await getDynamicAccounts();
+  return accounts.find(a => a.password === password) || null;
+}
+
 export async function GET() {
   const hasAuth = !!(effectiveAdminPassword || ACCOUNTS);
 
+  // Also check if there are dynamic accounts
+  let hasDynamicAuth = false;
+  try {
+    const accounts = await getDynamicAccounts();
+    hasDynamicAuth = accounts.length > 0;
+  } catch {}
+
   return NextResponse.json({
-    hasAuth,
-    hasPremiumAuth: !!PREMIUM_PASSWORD,
+    hasAuth: hasAuth || hasDynamicAuth,
+    hasPremiumAuth: !!(PREMIUM_PASSWORD || hasDynamicAuth),
     persistSession: PERSIST_SESSION,
     subscriptionSources: SUBSCRIPTION_SOURCES,
     iptvSources: IPTV_SOURCES,
@@ -84,15 +131,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ valid: false, message: 'Password required' }, { status: 400 });
     }
 
+    // Dynamic premium password (set via admin panel)
+    const dynamicPremiumPwd = await getDynamicPremiumPassword();
+
     // Premium password check (separate from main auth)
     if (type === 'premium') {
-      if (!PREMIUM_PASSWORD) {
-        // No premium password configured = open access
+      // Check env var premium password
+      if (PREMIUM_PASSWORD && password === PREMIUM_PASSWORD) {
         return NextResponse.json({ valid: true });
       }
-      if (password === PREMIUM_PASSWORD) {
+
+      // Check dynamic premium password (set via admin panel)
+      if (dynamicPremiumPwd && password === dynamicPremiumPwd) {
         return NextResponse.json({ valid: true });
       }
+
       // Also allow admin password to unlock premium
       if (effectiveAdminPassword && password === effectiveAdminPassword) {
         return NextResponse.json({ valid: true });
@@ -104,10 +157,22 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ valid: true });
         }
       }
+
+      // Check dynamic accounts
+      const dynamicAccount = await checkDynamicAccounts(password);
+      if (dynamicAccount && (dynamicAccount.role === 'super_admin' || dynamicAccount.role === 'admin')) {
+        return NextResponse.json({ valid: true });
+      }
+
+      // No premium password configured at all = open access
+      if (!PREMIUM_PASSWORD && !dynamicPremiumPwd) {
+        return NextResponse.json({ valid: true });
+      }
+
       return NextResponse.json({ valid: false });
     }
 
-    // 1. Check admin password
+    // 1. Check admin password (env var)
     if (effectiveAdminPassword && password === effectiveAdminPassword) {
       const profileId = await generateProfileId(password);
       return NextResponse.json({
@@ -119,7 +184,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 2. Check ACCOUNTS entries
+    // 2. Check ACCOUNTS env var entries
     const accounts = parseAccounts();
     for (const account of accounts) {
       if (password === account.password) {
@@ -135,7 +200,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. No match
+    // 3. Check dynamic admin-storage accounts
+    const dynamicAccount = await checkDynamicAccounts(password);
+    if (dynamicAccount) {
+      const profileId = await generateProfileId(password);
+      return NextResponse.json({
+        valid: true,
+        name: dynamicAccount.name,
+        role: dynamicAccount.role,
+        profileId,
+        persistSession: PERSIST_SESSION,
+      });
+    }
+
+    // 4. No match
     return NextResponse.json({ valid: false });
   } catch {
     return NextResponse.json({ valid: false, message: 'Invalid request' }, { status: 400 });
