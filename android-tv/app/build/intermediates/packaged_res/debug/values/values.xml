@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">KVideo</string>
-    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowFullscreen">true</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:colorBackground">#000000</item>
-    </style>
-</resources>
