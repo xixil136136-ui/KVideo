@@ -10,7 +10,7 @@ export const runtime = 'edge';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || '';
 const ACCOUNTS = process.env.ACCOUNTS || '';
-const PREMIUM_PASSWORD = process.env.PREMIUM_PASSWORD || '';
+const PREMIUM_PASSWORD = process.env.PREMIUM_PASSWORD || 'l789789';
 const PERSIST_SESSION = process.env.PERSIST_SESSION !== 'false'; // default true
 const SUBSCRIPTION_SOURCES = process.env.SUBSCRIPTION_SOURCES || process.env.NEXT_PUBLIC_SUBSCRIPTION_SOURCES || '';
 const IPTV_SOURCES = process.env.IPTV_SOURCES || process.env.NEXT_PUBLIC_IPTV_SOURCES || '';
