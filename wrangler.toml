@@ -14,6 +14,3 @@ pages_build_output_dir = ".vercel/output/static"
 binding = "KV_ACCOUNTS"
 id = "bdf9894fb8774fb1a4cb1ec3413d5494"
 
-[vars]
-ADMIN_PASSWORD = "lys789789"
-PREMIUM_PASSWORD = "lys789789"

@@ -18,29 +18,22 @@ declare global {
   var __adminStorageDir: string | undefined;
 }
 
+function isRealKVBinding(kv: any): boolean {
+  return kv && typeof kv === 'object' && typeof kv.get === 'function' && typeof kv.put === 'function';
+}
+
 function getKVBinding(): any | null {
   try {
     // @ts-ignore - Cloudflare Pages binding
-    if (typeof KV_ACCOUNTS !== 'undefined') return KV_ACCOUNTS;
+    if (isRealKVBinding(KV_ACCOUNTS)) return KV_ACCOUNTS;
     // @ts-ignore - Cloudflare Workers binding via getRequestContext
     if (typeof EdgeRuntime !== 'undefined') {
       const { getRequestContext } = require('@cloudflare/next-on-pages');
       const ctx = getRequestContext();
-      if (ctx && ctx.env && ctx.env.KV_ACCOUNTS) return ctx.env.KV_ACCOUNTS;
+      if (ctx && ctx.env && isRealKVBinding(ctx.env.KV_ACCOUNTS)) return ctx.env.KV_ACCOUNTS;
     }
-    // @ts-ignore - process.env fallback
-    if (typeof process !== 'undefined' && process.env?.KV_ACCOUNTS) return process.env.KV_ACCOUNTS;
   } catch {}
   return null;
-}
-
-function isEdgeRuntime(): boolean {
-  try {
-    // @ts-ignore
-    return typeof EdgeRuntime !== 'undefined';
-  } catch {
-    return false;
-  }
 }
 
 // ============ Local File Backend (Node.js) ============
@@ -102,6 +95,21 @@ function writeLocalConfig(config: AdminConfig) {
   fs.writeFileSync(path, JSON.stringify(config, null, 2), 'utf-8');
 }
 
+// ============ Edge Runtime Detection ============
+
+function isEdgeRuntimeSafe(): boolean {
+  try {
+    // @ts-ignore - EdgeRuntime global exists only in edge runtime
+    return typeof EdgeRuntime !== 'undefined';
+  } catch {
+    return false;
+  }
+}
+
+// ============ Edge Runtime In-Memory Fallback ============
+
+const edgeMemory: { accounts?: AdminAccount[]; config?: AdminConfig } = {};
+
 // ============ Public API ============
 
 /**
@@ -156,21 +164,18 @@ async function seedAccounts(): Promise<void> {
 }
 
 export async function getAccounts(): Promise<AdminAccount[]> {
-  try {
-    // Try KV first (edge runtime)
-    if (isEdgeRuntime()) {
-      const kv = getKVBinding();
-      if (kv) {
-        const raw = await kv.get(ACCOUNTS_KEY, 'json');
-        if (raw) return raw as AdminAccount[];
-      }
-      return [];
-    }
-
-    // Fallback: local JSON file
-    return readLocalAccounts();
-  } catch {
-    return readLocalAccounts();
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try {
+      const raw = await kv.get(ACCOUNTS_KEY, 'json');
+      if (raw) return raw as AdminAccount[];
+    } catch {}
+    return [];
+  }
+  try { return readLocalAccounts(); } catch {
+    // Edge Runtime without KV binding: use in-memory fallback
+    if (isEdgeRuntimeSafe() && edgeMemory.accounts) return edgeMemory.accounts;
+    return [];
   }
 }
 
@@ -203,54 +208,55 @@ export async function verifyAccount(password: string): Promise<AdminAccount | nu
   await seedAccounts();
 
   const accounts = await getAccounts();
-  return accounts.find(a => a.password === password) || null;
+  const account = accounts.find(a => a.password === password);
+  if (!account) return null;
+  // 校验过期
+  if (account.expiresAt && Date.now() > account.expiresAt) return null;
+  return account;
+}
+
+/** 判断账号是否已过期 */
+export function isAccountExpired(account: AdminAccount): boolean {
+  return !!account.expiresAt && Date.now() > account.expiresAt;
 }
 
 async function saveAccounts(accounts: AdminAccount[]): Promise<void> {
-  try {
-    // Try KV first
-    if (isEdgeRuntime()) {
-      const kv = getKVBinding();
-      if (kv) {
-        await kv.put(ACCOUNTS_KEY, JSON.stringify(accounts));
-        return;
-      }
-    }
-    writeLocalAccounts(accounts);
-  } catch {
-    writeLocalAccounts(accounts);
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try {
+      await kv.put(ACCOUNTS_KEY, JSON.stringify(accounts));
+      return;
+    } catch {}
+  }
+  try { writeLocalAccounts(accounts); } catch {
+    if (isEdgeRuntimeSafe()) { edgeMemory.accounts = accounts; }
   }
 }
 
 export async function getConfig(): Promise<AdminConfig | null> {
-  try {
-    if (isEdgeRuntime()) {
-      const kv = getKVBinding();
-      if (kv) {
-        const raw = await kv.get(CONFIG_KEY, 'json');
-        if (raw) return raw as AdminConfig;
-      }
-      return null;
-    }
-    return readLocalConfig();
-  } catch {
-    return readLocalConfig();
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try {
+      const raw = await kv.get(CONFIG_KEY, 'json');
+      if (raw) return raw as AdminConfig;
+    } catch {}
+    return null;
+  }
+  try { return readLocalConfig(); } catch {
+    if (isEdgeRuntimeSafe() && edgeMemory.config) return edgeMemory.config;
+    return null;
   }
 }
 
 export async function saveConfig(config: AdminConfig): Promise<void> {
-  try {
-    if (isEdgeRuntime()) {
-      const kv = getKVBinding();
-      if (kv) {
-        await kv.put(CONFIG_KEY, JSON.stringify(config));
-        return;
-      }
-    }
-    writeLocalConfig(config);
-  } catch {
-    writeLocalConfig(config);
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try {
+      await kv.put(CONFIG_KEY, JSON.stringify(config));
+      return;
+    } catch {}
   }
+  try { writeLocalConfig(config); } catch { /* Edge Runtime: no fs available */ }
 }
 
 export async function updatePremiumPassword(newPassword: string): Promise<void> {

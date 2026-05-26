@@ -56,16 +56,31 @@ function parseAccounts(): AccountEntry[] {
 }
 
 /**
- * Generate a deterministic profileId from password using SHA-256.
- * Uses a salt to avoid rainbow table attacks.
+ * Generate a session token from an account's info.
+ * Returns a base64-encoded JSON with id, name, role, and expiry.
+ * This is what verifySession() in the admin accounts API expects.
  */
-async function generateProfileId(password: string): Promise<string> {
-  const salt = 'kvideo-profile-salt-v1';
-  const data = new TextEncoder().encode(password + salt);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hash));
-  // Use first 8 bytes (16 hex chars) for a compact but unique ID
-  return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
+async function generateSessionToken(
+  id: string,
+  name: string,
+  role: string,
+): Promise<string> {
+  const sessionData = {
+    id,
+    name,
+    role,
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
+  const json = JSON.stringify(sessionData);
+  // Use platform-available base64 encoding (Buffer not always available in edge)
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(json);
+  // Convert Uint8Array to base64 using btoa
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
 /**
@@ -74,14 +89,16 @@ async function generateProfileId(password: string): Promise<string> {
  */
 async function getDynamicAccounts(): Promise<AccountEntry[]> {
   try {
-    const { getAccounts } = await import('@/lib/admin-storage');
+    const { getAccounts, isAccountExpired } = await import('@/lib/admin-storage');
     const adminAccounts = await getAccounts();
-    return adminAccounts.map(a => ({
-      password: a.password,
-      name: a.name,
-      role: a.role as 'super_admin' | 'admin' | 'viewer',
-      customPermissions: [],
-    }));
+    return adminAccounts
+      .filter(a => !isAccountExpired(a))
+      .map(a => ({
+        password: a.password,
+        name: a.name,
+        role: a.role as 'super_admin' | 'admin' | 'viewer',
+        customPermissions: [],
+      }));
   } catch {
     return [];
   }
@@ -137,7 +154,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ valid: false, message: 'Password required' }, { status: 400 });
     }
 
-    const PREMIUM_PASSWORD = getPremiumPassword();
+    const PREMIUM_PASSWORD=getPremiumPassword();
     const effectiveAdminPassword = getEffectiveAdminPassword();
 
     // Dynamic premium password (set via admin panel)
@@ -183,12 +200,12 @@ export async function POST(request: NextRequest) {
 
     // 1. Check admin password (env var)
     if (effectiveAdminPassword && password === effectiveAdminPassword) {
-      const profileId = await generateProfileId(password);
       // Seed KV with this admin account on first login
       try {
         const { verifyAccount } = await import('@/lib/admin-storage');
         await verifyAccount(password);
       } catch {}
+      const profileId = await generateSessionToken('admin-default', '管理员', 'super_admin');
       return NextResponse.json({
         valid: true,
         name: '管理员',
@@ -202,7 +219,7 @@ export async function POST(request: NextRequest) {
     const accounts = parseAccounts();
     for (const account of accounts) {
       if (password === account.password) {
-        const profileId = await generateProfileId(password);
+        const profileId = await generateSessionToken(account.password, account.name, account.role);
         return NextResponse.json({
           valid: true,
           name: account.name,
@@ -219,7 +236,7 @@ export async function POST(request: NextRequest) {
       const { verifyAccount } = await import('@/lib/admin-storage');
       const found = await verifyAccount(password);
       if (found) {
-        const profileId = await generateProfileId(password);
+        const profileId = await generateSessionToken(found.id || found.password, found.name, found.role);
         return NextResponse.json({
           valid: true,
           name: found.name,

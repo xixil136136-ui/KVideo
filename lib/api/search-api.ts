@@ -16,7 +16,7 @@ async function searchVideosBySource(
     const startTime = Date.now();
 
     const url = new URL(`${source.baseUrl}${source.searchPath}`);
-    url.searchParams.set('ac', 'detail');
+    url.searchParams.set('ac', 'videolist');
     url.searchParams.set('wd', query);
     url.searchParams.set('pg', page.toString());
 

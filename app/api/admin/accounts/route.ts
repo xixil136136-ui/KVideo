@@ -13,7 +13,9 @@ function verifySession(request: NextRequest): { id: string; name: string; role: 
   if (!auth) return null;
 
   try {
-    const decoded = JSON.parse(Buffer.from(auth.replace('Bearer ', ''), 'base64').toString());
+    // btoa/atob for Edge Runtime compatibility (no Buffer in Cloudflare Pages)
+    const token = auth.replace('Bearer ', '');
+    const decoded = JSON.parse(atob(token));
     if (decoded.exp < Date.now()) return null;
     return { id: decoded.id, name: decoded.name, role: decoded.role };
   } catch {
@@ -64,6 +66,11 @@ export async function POST(request: NextRequest) {
       updatedAt: Date.now(),
     };
 
+    // 支持设置过期时间（30天=月卡, 90天=季卡, 365天=年卡）
+    if (body.duration && typeof body.duration === 'number' && body.duration > 0) {
+      account.expiresAt = Date.now() + body.duration * 24 * 60 * 60 * 1000;
+    }
+
     await addAccount(account);
 
     // If this is a premium password update too
@@ -73,8 +80,32 @@ export async function POST(request: NextRequest) {
 
     const { password, ...safeAccount } = account;
     return NextResponse.json({ valid: true, account: safeAccount });
-  } catch (error) {
-    return NextResponse.json({ valid: false, message: '创建失败' }, { status: 500 });
+  } catch (error: any) {
+    // Try to get the KV binding directly to diagnose
+    let kvDiag = {};
+    try {
+      let kv: any = null;
+      if (typeof (globalThis as any).KV_ACCOUNTS !== 'undefined') kv = (globalThis as any).KV_ACCOUNTS;
+      else if (typeof process !== 'undefined' && (process as any).env?.KV_ACCOUNTS) kv = (process as any).env?.KV_ACCOUNTS;
+      if (kv) {
+        kvDiag = {
+          hasGet: typeof kv.get === 'function',
+          hasPut: typeof kv.put === 'function',
+          ctor: kv.constructor?.name,
+        };
+        // Try a direct put
+        await kv.put('kvideo_diag_from_accounts', JSON.stringify({ts:Date.now()}), {});
+        kvDiag = { ...kvDiag, directPutOk: true };
+        const back = await kv.get('kvideo_diag_from_accounts', 'json');
+        kvDiag = { ...kvDiag, readBack: !!back };
+        await kv.delete('kvideo_diag_from_accounts');
+      } else {
+        kvDiag = { noKv: true };
+      }
+    } catch (kvErr: any) {
+      kvDiag = { ...kvDiag, kvError: kvErr?.message || String(kvErr) };
+    }
+    return NextResponse.json({ valid: false, message: '创建失败', error: error?.message || String(error), kvDiag }, { status: 500 });
   }
 }
 
@@ -95,6 +126,10 @@ export async function PUT(request: NextRequest) {
     if (body.password) updates.password = body.password;
     if (body.name) updates.name = body.name;
     if (body.role) updates.role = body.role;
+    // 编辑时也可以设置/续期过期时间
+    if (body.duration && typeof body.duration === 'number' && body.duration > 0) {
+      updates.expiresAt = Date.now() + body.duration * 24 * 60 * 60 * 1000;
+    }
 
     const success = await updateAccount(body.id, updates);
     if (!success) {
