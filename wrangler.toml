@@ -5,13 +5,18 @@
 name = "kvideo"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
 
-account_id = "1257ea16508eb7649f32a7c005d7f00b"
+# account_id = "1257ea16508eb7649f32a7c005d7f00b"
 
 # KV Namespace for Admin Account Storage
-[[kv_namespaces]]
-binding = "KV_ACCOUNTS"
-id = "bdf9894fb8774fb1a4cb1ec3413d5494"
+# Pages KV bindings must be configured via Cloudflare Dashboard:
+# Project → Settings → Functions → KV namespace bindings
+# KV namespace id: bdf9894fb8774fb1a4cb1ec3413d5494
+# Binding name: KV_ACCOUNTS
+# [[kv_namespaces]]
+# binding = "KV_ACCOUNTS"
+# id = "bdf9894fb8774fb1a4cb1ec3413d5494"
 
 [vars]
 PREMIUM_PASSWORD = "l789789"
