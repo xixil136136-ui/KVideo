@@ -33,13 +33,15 @@ export default function AdminPage() {
 
       if (data.valid) {
         const sessionInfo = { name: data.name, role: data.role, profileId: data.profileId };
-        // Create a proper session token: base64-encoded JSON with id, name, role, exp
-        const sessionToken = btoa(JSON.stringify({
-          id: data.profileId,
-          name: data.name,
-          role: data.role,
-          exp: Date.now() + 24 * 60 * 60 * 1000,
-        }));
+        // Create a proper session token: UTF-8-safe base64-encoded JSON
+        const sessionToken = btoa(
+          new TextEncoder().encode(JSON.stringify({
+            id: data.profileId,
+            name: data.name,
+            role: data.role,
+            exp: Date.now() + 24 * 60 * 60 * 1000,
+          })).reduce((s, b) => s + String.fromCharCode(b), '')
+        );
         sessionStorage.setItem('kvideo-admin-session', JSON.stringify(sessionInfo));
         sessionStorage.setItem('kvideo-admin-token', sessionToken);
         setSession(sessionInfo);
