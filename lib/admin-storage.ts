@@ -23,14 +23,22 @@ function isRealKVBinding(kv: any): boolean {
 }
 
 function getKVBinding(): any | null {
+  // Priority 1: Direct global (Workers runtime)
   try {
-    // @ts-ignore - Cloudflare Pages binding
     if (isRealKVBinding(KV_ACCOUNTS)) return KV_ACCOUNTS;
-    // @ts-ignore - Cloudflare Workers binding via getRequestContext
-    if (typeof EdgeRuntime !== 'undefined') {
-      const { getRequestContext } = require('@cloudflare/next-on-pages');
-      const ctx = getRequestContext();
-      if (ctx && ctx.env && isRealKVBinding(ctx.env.KV_ACCOUNTS)) return ctx.env.KV_ACCOUNTS;
+  } catch {}
+  // Priority 2: next-on-pages getRequestContext (Pages Functions)
+  try {
+    const { getRequestContext } = require('@cloudflare/next-on-pages');
+    const ctx = getRequestContext();
+    if (ctx?.env && isRealKVBinding(ctx.env.KV_ACCOUNTS)) return ctx.env.KV_ACCOUNTS;
+  } catch {}
+  // Priority 3: Try accessing via process.env binding name (some runtimes)
+  try {
+    if (typeof process !== 'undefined') {
+      const bindingName = (process as any).env?.KV_ACCOUNTS_BINDING || 'KV_ACCOUNTS';
+      const binding = (globalThis as any)[bindingName];
+      if (isRealKVBinding(binding)) return binding;
     }
   } catch {}
   return null;
