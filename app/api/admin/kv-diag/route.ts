@@ -11,10 +11,11 @@ export async function GET() {
 
   // Test 1: Check global KV_ACCOUNTS
   try {
-    results.globalKV = typeof KV_ACCOUNTS;
-    results.globalKVType = KV_ACCOUNTS?.constructor?.name;
-    results.globalKVHasGet = typeof KV_ACCOUNTS?.get === 'function';
-    results.globalKVHasPut = typeof KV_ACCOUNTS?.put === 'function';
+    const kvGlobal = (globalThis as any).KV_ACCOUNTS;
+    results.globalKV = typeof kvGlobal;
+    results.globalKVType = kvGlobal?.constructor?.name;
+    results.globalKVHasGet = typeof kvGlobal?.get === 'function';
+    results.globalKVHasPut = typeof kvGlobal?.put === 'function';
   } catch (e: any) {
     results.globalKV = `error: ${e.message}`;
   }
@@ -52,7 +53,7 @@ export async function GET() {
 
   // Test 3: EdgeRuntime global
   try {
-    results.edgeRuntime = typeof EdgeRuntime;
+    results.edgeRuntime = typeof (globalThis as any).EdgeRuntime;
   } catch {
     results.edgeRuntime = 'undefined';
   }
