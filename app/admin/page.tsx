@@ -69,54 +69,77 @@ export default function AdminPage() {
         minHeight: '100vh',
         background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%)',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         fontFamily: 'system-ui, -apple-system, sans-serif',
         padding: '20px',
       }}>
+        {/* Login Card */}
         <div style={{
           background: 'rgba(255,255,255,0.05)',
           backdropFilter: 'blur(20px)',
-          borderRadius: '16px',
-          padding: '40px',
+          borderRadius: '20px',
+          padding: '48px 40px',
           width: '100%',
-          maxWidth: '400px',
+          maxWidth: '420px',
           border: '1px solid rgba(255,255,255,0.1)',
         }}>
+          <div style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            color: 'rgba(255,255,255,0.3)',
+            letterSpacing: '2px',
+            textTransform: 'uppercase' as const,
+            marginBottom: '8px',
+          }}>VIP 会员</div>
           <h1 style={{
-            fontSize: '24px',
+            fontSize: '28px',
             fontWeight: 700,
             color: '#fff',
-            marginBottom: '8px',
-            textAlign: 'center',
-          }}>KVideo 管理后台</h1>
+            marginBottom: '4px',
+          }}>NB影院</h1>
           <p style={{
             fontSize: '14px',
-            color: 'rgba(255,255,255,0.5)',
+            color: 'rgba(255,255,255,0.4)',
             marginBottom: '32px',
-            textAlign: 'center',
-          }}>输入管理员密码登录</p>
+          }}>输入会员密码解锁全部内容</p>
 
           <form onSubmit={handleLogin}>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="管理员密码"
-              autoFocus
-              style={{
-                width: '100%',
-                padding: '14px 16px',
-                borderRadius: '12px',
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(0,0,0,0.3)',
-                color: '#fff',
-                fontSize: '16px',
-                outline: 'none',
-                boxSizing: 'border-box',
-                marginBottom: '16px',
-              }}
-            />
+            <div style={{
+              position: 'relative' as const,
+              marginBottom: '16px',
+            }}>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="输入会员密码"
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '16px 16px 16px 48px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'rgba(0,0,0,0.3)',
+                  color: '#fff',
+                  fontSize: '16px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  transition: 'border-color 0.2s',
+                }}
+                onFocus={e => e.target.style.borderColor = 'rgba(99,102,241,0.5)'}
+                onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+              />
+              <span style={{
+                position: 'absolute',
+                left: '16px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                fontSize: '18px',
+                opacity: 0.4,
+              }}>🔑</span>
+            </div>
 
             {error && (
               <p style={{ color: '#ff4444', fontSize: '14px', marginBottom: '12px', textAlign: 'center' }}>
@@ -129,22 +152,26 @@ export default function AdminPage() {
               disabled={loading || !password}
               style={{
                 width: '100%',
-                padding: '14px',
+                padding: '16px',
                 borderRadius: '12px',
                 border: 'none',
-                background: loading ? 'rgba(99,102,241,0.5)' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                background: loading
+                  ? 'rgba(99,102,241,0.5)'
+                  : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                 color: '#fff',
                 fontSize: '16px',
                 fontWeight: 600,
                 cursor: loading ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s',
+                boxShadow: loading
+                  ? 'none'
+                  : '0 4px 15px rgba(99,102,241,0.3)',
               }}
             >
-              {loading ? '验证中...' : '登录'}
+              {loading ? '验证中...' : '解锁观影 ▶'}
             </button>
           </form>
         </div>
-      </div>
     );
   }
 
@@ -168,7 +195,7 @@ export default function AdminPage() {
         alignItems: 'center',
       }}>
         <div>
-          <h1 style={{ color: '#fff', fontSize: '22px', margin: 0 }}>KVideo 管理后台</h1>
+          <h1 style={{ color: '#fff', fontSize: '22px', margin: 0 }}>NB影院 管理后台</h1>
           <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', marginTop: '4px' }}>
             {session.name} · {session.role === 'super_admin' ? '超级管理员' : session.role === 'admin' ? '管理员' : '查看者'}
           </p>

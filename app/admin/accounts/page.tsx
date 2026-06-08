@@ -12,9 +12,9 @@ interface Account {
 }
 
 const DURATION_PLANS = [
-  { days: 30,  label: '月卡', price: '9.9', desc: '30天' },
-  { days: 90,  label: '季卡', price: '19.9', desc: '90天' },
-  { days: 365, label: '年卡', price: '49.9', desc: '365天' },
+  { days: 30,  label: '30天', desc: '30天有效期' },
+  { days: 90,  label: '90天', desc: '90天有效期' },
+  { days: 365, label: '365天', desc: '365天有效期' },
 ];
 
 export default function AdminAccountsPage() {
@@ -145,8 +145,8 @@ export default function AdminAccountsPage() {
     }
   };
 
-  const handleExtend = async (id: string, name: string, days: number, price: string) => {
-    if (!confirm(`续期「${name}」${days}天（${price}元）？`)) return;
+  const handleExtend = async (id: string, name: string, days: number) => {
+    if (!confirm(`续期「${name}」${days}天？`)) return;
     setError('');
     setSuccessMsg('');
 
@@ -374,9 +374,6 @@ export default function AdminAccountsPage() {
                       <div style={{ color: '#fff', fontSize: '15px', fontWeight: 600 }}>
                         {plan.label}
                       </div>
-                      <div style={{ color: '#22c55e', fontSize: '18px', fontWeight: 700, margin: '4px 0' }}>
-                        ¥{plan.price}
-                      </div>
                       <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
                         {plan.desc}
                       </div>
@@ -601,7 +598,7 @@ export default function AdminAccountsPage() {
                     {account.expiresAt && (
                       <div style={{ display: 'flex', gap: '4px', marginRight: '8px' }}>
                         <button
-                          onClick={() => handleExtend(account.id, account.name, 30, '9.9')}
+                          onClick={() => handleExtend(account.id, account.name, 30)}
                           style={{
                             padding: '4px 8px',
                             borderRadius: '6px',
@@ -612,10 +609,10 @@ export default function AdminAccountsPage() {
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
                           }}
-                          title="续费月卡 9.9元"
-                        >+月卡</button>
+                          title="续期30天"
+                        >+30天</button>
                         <button
-                          onClick={() => handleExtend(account.id, account.name, 90, '19.9')}
+                          onClick={() => handleExtend(account.id, account.name, 90)}
                           style={{
                             padding: '4px 8px',
                             borderRadius: '6px',
@@ -626,10 +623,10 @@ export default function AdminAccountsPage() {
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
                           }}
-                          title="续费季卡 19.9元"
-                        >+季卡</button>
+                          title="续期90天"
+                        >+90天</button>
                         <button
-                          onClick={() => handleExtend(account.id, account.name, 365, '49.9')}
+                          onClick={() => handleExtend(account.id, account.name, 365)}
                           style={{
                             padding: '4px 8px',
                             borderRadius: '6px',
@@ -640,8 +637,8 @@ export default function AdminAccountsPage() {
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
                           }}
-                          title="续费年卡 49.9元"
-                        >+年卡</button>
+                          title="续期365天"
+                        >+365天</button>
                       </div>
                     )}
                     <button
