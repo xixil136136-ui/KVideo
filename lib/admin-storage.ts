@@ -11,6 +11,7 @@ import { getEnvVar } from '@/lib/env';
 
 const ACCOUNTS_KEY = 'kvideo_admin_accounts';
 const CONFIG_KEY = 'kvideo_admin_config';
+const DEVICE_REGISTRY_KEY = 'kvideo_device_registry';
 
 // ============ Cloudflare KV Backend (Edge Runtime) ============
 
@@ -23,23 +24,19 @@ function isRealKVBinding(kv: any): boolean {
 }
 
 function getKVBinding(): any | null {
-  // Priority 1: Direct global (Workers runtime)
+  // Priority 1: Direct global (Workers runtime — KV namespace on globalThis)
   try {
-    if (isRealKVBinding(KV_ACCOUNTS)) return KV_ACCOUNTS;
+    if (isRealKVBinding((globalThis as any).KV_ACCOUNTS)) return (globalThis as any).KV_ACCOUNTS;
   } catch {}
-  // Priority 2: next-on-pages getRequestContext (Pages Functions)
+  // Priority 2: process.env (next-on-pages Pages Functions — KV via env proxy)
   try {
-    const { getRequestContext } = require('@cloudflare/next-on-pages');
-    const ctx = getRequestContext();
+    if (isRealKVBinding((process.env as any).KV_ACCOUNTS)) return (process.env as any).KV_ACCOUNTS;
+  } catch {}
+  // Priority 3: Cloudflare request context via Symbol (next-on-pages runtime)
+  try {
+    const symbol = Symbol.for('__cloudflare-request-context__');
+    const ctx = (globalThis as any)[symbol];
     if (ctx?.env && isRealKVBinding(ctx.env.KV_ACCOUNTS)) return ctx.env.KV_ACCOUNTS;
-  } catch {}
-  // Priority 3: Try accessing via process.env binding name (some runtimes)
-  try {
-    if (typeof process !== 'undefined') {
-      const bindingName = (process as any).env?.KV_ACCOUNTS_BINDING || 'KV_ACCOUNTS';
-      const binding = (globalThis as any)[bindingName];
-      if (isRealKVBinding(binding)) return binding;
-    }
   } catch {}
   return null;
 }
@@ -275,4 +272,110 @@ export async function updatePremiumPassword(newPassword: string): Promise<void> 
   };
   config.premiumPassword = newPassword;
   await saveConfig(config);
+}
+
+// ============ 设备注册管理 ============
+
+const MAX_DEVICES_PER_PASSWORD = 5;
+
+interface DeviceRegistry {
+  [password: string]: string[]; // password → [deviceId1, deviceId2, ...]
+}
+
+async function getDeviceRegistry(): Promise<DeviceRegistry> {
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try {
+      const raw = await kv.get(DEVICE_REGISTRY_KEY, 'json');
+      if (raw) return raw as DeviceRegistry;
+    } catch {}
+    return {};
+  }
+  try {
+    const fs = require('fs');
+    const dir = globalThis.__adminStorageDir || './data';
+    const path = `${dir}/device-registry.json`;
+    ensureDir(require('path').dirname(path));
+    if (!fs.existsSync(path)) return {};
+    return JSON.parse(fs.readFileSync(path, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+async function saveDeviceRegistry(registry: DeviceRegistry): Promise<void> {
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try {
+      await kv.put(DEVICE_REGISTRY_KEY, JSON.stringify(registry));
+      return;
+    } catch {}
+  }
+  try {
+    const fs = require('fs');
+    const dir = globalThis.__adminStorageDir || './data';
+    const path = `${dir}/device-registry.json`;
+    ensureDir(require('path').dirname(path));
+    fs.writeFileSync(path, JSON.stringify(registry, null, 2), 'utf-8');
+  } catch { /* Edge Runtime: no fs available */ }
+}
+
+/**
+ * 注册设备到密码下
+ * 返回 { success: boolean, deviceLimitReached: boolean, deviceCount: number }
+ */
+export async function registerDevice(password: string, deviceId: string): Promise<{
+  success: boolean;
+  deviceLimitReached: boolean;
+  deviceCount: number;
+}> {
+  const registry = await getDeviceRegistry();
+  const devices = registry[password] || [];
+
+  // 设备已注册过
+  if (devices.includes(deviceId)) {
+    return { success: true, deviceLimitReached: false, deviceCount: devices.length };
+  }
+
+  // 检查是否已达上限
+  if (devices.length >= MAX_DEVICES_PER_PASSWORD) {
+    return { success: false, deviceLimitReached: true, deviceCount: devices.length };
+  }
+
+  // 注册新设备
+  devices.push(deviceId);
+  registry[password] = devices;
+  await saveDeviceRegistry(registry);
+
+  return { success: true, deviceLimitReached: false, deviceCount: devices.length };
+}
+
+/**
+ * 注销设备
+ */
+export async function unregisterDevice(password: string, deviceId: string): Promise<boolean> {
+  const registry = await getDeviceRegistry();
+  const devices = registry[password];
+  if (!devices) return false;
+
+  const index = devices.indexOf(deviceId);
+  if (index === -1) return false;
+
+  devices.splice(index, 1);
+  if (devices.length === 0) {
+    delete registry[password];
+  } else {
+    registry[password] = devices;
+  }
+  await saveDeviceRegistry(registry);
+  return true;
+}
+
+/**
+ * 获取某密码已注册设备数量
+ */
+export async function getDeviceCount(password: string): Promise<number> {
+  const registry = await getDeviceRegistry();
+  const devices = registry[password];
+  return devices ? devices.length : 0;
 }

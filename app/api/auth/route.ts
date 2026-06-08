@@ -2,6 +2,7 @@
  * Auth API Route
  * Handles authentication with role-based accounts
  * Supports both env var accounts and dynamic admin-storage accounts
+ * + device limit (max 5 devices per password)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -124,6 +125,28 @@ async function checkDynamicAccounts(password: string): Promise<AccountEntry | nu
   return accounts.find(a => a.password === password) || null;
 }
 
+/**
+ * 检查设备数量限制，返回 null = 通过，否则返回拒绝响应
+ */
+async function checkDeviceLimit(password: string, deviceId: string | undefined | null): Promise<NextResponse | null> {
+  if (!deviceId || typeof deviceId !== 'string') {
+    return null; // 无 deviceId 则跳过检查（向后兼容）
+  }
+  try {
+    const { registerDevice } = await import('@/lib/admin-storage');
+    const result = await registerDevice(password, deviceId);
+    if (result.deviceLimitReached) {
+      return NextResponse.json({
+        valid: false,
+        deviceLimitReached: true,
+        deviceCount: result.deviceCount,
+        message: `该密码已绑定 ${result.deviceCount} 台设备，已达上限（最多5台）`,
+      });
+    }
+  } catch {}
+  return null;
+}
+
 export async function GET() {
   const effectiveAdminPassword = getEffectiveAdminPassword();
   const ACCOUNTS = getAccountsStr();
@@ -148,7 +171,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { password, type } = await request.json();
+    const { password, type, deviceId } = await request.json();
 
     if (!password || typeof password !== 'string') {
       return NextResponse.json({ valid: false, message: 'Password required' }, { status: 400 });
@@ -198,8 +221,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ valid: false });
     }
 
+    // ====== 主要登录流程（非 premium） ======
+
     // 1. Check admin password (env var)
     if (effectiveAdminPassword && password === effectiveAdminPassword) {
+      // 设备数量检查
+      const deviceBlocked = await checkDeviceLimit(password, deviceId);
+      if (deviceBlocked) return deviceBlocked;
+
       // Seed KV with this admin account on first login
       try {
         const { verifyAccount } = await import('@/lib/admin-storage');
@@ -219,6 +248,10 @@ export async function POST(request: NextRequest) {
     const accounts = parseAccounts();
     for (const account of accounts) {
       if (password === account.password) {
+        // 设备数量检查
+        const deviceBlocked = await checkDeviceLimit(password, deviceId);
+        if (deviceBlocked) return deviceBlocked;
+
         const profileId = await generateSessionToken(account.password, account.name, account.role);
         return NextResponse.json({
           valid: true,
@@ -236,6 +269,10 @@ export async function POST(request: NextRequest) {
       const { verifyAccount } = await import('@/lib/admin-storage');
       const found = await verifyAccount(password);
       if (found) {
+        // 设备数量检查
+        const deviceBlocked = await checkDeviceLimit(password, deviceId);
+        if (deviceBlocked) return deviceBlocked;
+
         const profileId = await generateSessionToken(found.id || found.password, found.name, found.role);
         return NextResponse.json({
           valid: true,
