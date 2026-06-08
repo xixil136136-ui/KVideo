@@ -12,6 +12,7 @@ import type { VideoResolutionInfo } from '@/components/player/hooks/useVideoReso
 import { useResolutionProbe } from '@/lib/hooks/useResolutionProbe';
 import { useVideoPlayer } from '@/lib/hooks/useVideoPlayer';
 import { useHistory } from '@/lib/store/history-store';
+import { getSession } from '@/lib/store/auth-store';
 import { FavoritesSidebar } from '@/components/favorites/FavoritesSidebar';
 import { FavoriteButton } from '@/components/favorites/FavoriteButton';
 import { PlayerNavbar } from '@/components/player/PlayerNavbar';
@@ -286,6 +287,7 @@ function PlayerContent() {
   // Track current source for switching
   const [currentSourceId, setCurrentSourceId] = useState(source);
   const playerTimeRef = useRef(0);
+  const playerDurationRef = useRef(0);
 
   // Track detected video resolution from the player
   const [detectedResolution, setDetectedResolution] = useState<VideoResolutionInfo | null>(null);
@@ -320,6 +322,70 @@ function PlayerContent() {
       );
     }
   }, [videoData, playUrl, videoId, currentEpisode, source, title, addToHistory]);
+
+  // ===== 自动保存观看进度到服务器 =====
+  // 每30秒 + 页面关闭/切换时保存
+  const saveProgressToServer = useCallback(() => {
+    const session = getSession();
+    if (!session?.profileId) return;
+
+    const currentTime = playerTimeRef.current;
+    const duration = playerDurationRef.current;
+    if (currentTime <= 0 || duration <= 0) return;
+
+    const progress = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
+    // 进度<1%不保存
+    if (progress < 1) return;
+
+    fetch('/api/progress', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.profileId}`,
+      },
+      body: JSON.stringify({
+        videoId,
+        title: videoData?.vod_name || title || '未知视频',
+        url: playUrl,
+        episodeIndex: currentEpisode,
+        source,
+        playbackPosition: Math.round(currentTime),
+        duration: Math.round(duration),
+        poster: videoData?.vod_pic || undefined,
+        type_name: videoData?.type_name || undefined,
+      }),
+    }).catch(() => {
+      // Silent fail — 网络错误不影响观看体验
+    });
+  }, [videoId, title, playUrl, currentEpisode, source, videoData?.vod_name, videoData?.vod_pic, videoData?.type_name]);
+
+  useEffect(() => {
+    if (!videoId) return;
+
+    // 每30秒自动保存
+    const interval = setInterval(saveProgressToServer, 30000);
+
+    // 页面关闭/隐藏时保存
+    const handleBeforeUnload = () => {
+      saveProgressToServer();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveProgressToServer();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      // 组件卸载时保存一次
+      saveProgressToServer();
+    };
+  }, [videoId, saveProgressToServer]);
 
   const handleEpisodeClick = useCallback((episode: any, index: number) => {
     setCurrentEpisode(index);
@@ -428,6 +494,7 @@ function PlayerContent() {
                 videoTitle={videoData?.vod_name || title || ''}
                 episodeName={videoData?.episodes?.[currentEpisode]?.name || ''}
                 externalTimeRef={playerTimeRef}
+                externalDurationRef={playerDurationRef}
                 onResolutionDetected={setDetectedResolution}
               />
               <div className="hidden lg:block">

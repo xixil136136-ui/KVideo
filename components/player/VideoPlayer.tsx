@@ -25,6 +25,8 @@ interface VideoPlayerProps {
   episodeName?: string;
   // Expose current time to parent
   externalTimeRef?: React.MutableRefObject<number>;
+  // Expose duration to parent
+  externalDurationRef?: React.MutableRefObject<number>;
   // Resolution callback
   onResolutionDetected?: (info: import('./hooks/useVideoResolution').VideoResolutionInfo) => void;
 }
@@ -41,6 +43,7 @@ export function VideoPlayer({
   videoTitle,
   episodeName,
   externalTimeRef,
+  externalDurationRef,
   onResolutionDetected,
 }: VideoPlayerProps) {
   const [videoError, setVideoError] = useState<string>('');
@@ -140,6 +143,8 @@ export function VideoPlayer({
     durationRef.current = duration;
     // Expose to parent for source switching
     if (externalTimeRef) externalTimeRef.current = currentTime;
+    // Expose duration to parent
+    if (externalDurationRef) externalDurationRef.current = duration;
 
     if (!videoId || !playUrl || duration === 0) return;
 

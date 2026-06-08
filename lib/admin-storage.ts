@@ -379,3 +379,123 @@ export async function getDeviceCount(password: string): Promise<number> {
   const devices = registry[password];
   return devices ? devices.length : 0;
 }
+
+// ============ 观看进度管理 ============
+
+const PROGRESS_KEY_PREFIX = 'kvideo_progress_';
+
+interface WatchProgressItem {
+  videoId: string | number;
+  title: string;
+  url: string;
+  episodeIndex: number;
+  source: string;
+  playbackPosition: number;
+  duration: number;
+  progress: number;
+  poster?: string;
+  timestamp: number;
+  type_name?: string;
+}
+
+async function kvGet(key: string): Promise<any | null> {
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try { return await kv.get(key, 'json'); } catch {}
+  }
+  try {
+    const fs = require('fs');
+    const dir = globalThis.__adminStorageDir || './data';
+    const path = `${dir}/${key.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+    ensureDir(require('path').dirname(path));
+    if (!fs.existsSync(path)) return null;
+    return JSON.parse(fs.readFileSync(path, 'utf-8'));
+  } catch {
+    if (isEdgeRuntimeSafe() && edgeMemory[key]) return edgeMemory[key];
+    return null;
+  }
+}
+
+async function kvPut(key: string, value: any): Promise<void> {
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try { await kv.put(key, JSON.stringify(value)); return; } catch {}
+  }
+  try {
+    const fs = require('fs');
+    const dir = globalThis.__adminStorageDir || './data';
+    const path = `${dir}/${key.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+    ensureDir(require('path').dirname(path));
+    fs.writeFileSync(path, JSON.stringify(value, null, 2), 'utf-8');
+  } catch {
+    if (isEdgeRuntimeSafe()) { edgeMemory[key] = value; }
+  }
+}
+
+async function kvDelete(key: string): Promise<void> {
+  const kv = getKVBinding();
+  if (isRealKVBinding(kv)) {
+    try { await kv.delete(key); return; } catch {}
+  }
+  try {
+    const fs = require('fs');
+    const dir = globalThis.__adminStorageDir || './data';
+    const path = `${dir}/${key.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+    if (fs.existsSync(path)) fs.unlinkSync(path);
+  } catch {
+    if (isEdgeRuntimeSafe()) { delete edgeMemory[key]; }
+  }
+}
+
+/**
+ * 获取某个账号的观看进度列表
+ */
+export async function getWatchProgress(profileId: string): Promise<WatchProgressItem[]> {
+  const key = `${PROGRESS_KEY_PREFIX}${profileId}`;
+  const data = await kvGet(key);
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * 保存某个账号的观看进度列表（完整替换）
+ */
+export async function saveWatchProgress(profileId: string, items: WatchProgressItem[]): Promise<void> {
+  const key = `${PROGRESS_KEY_PREFIX}${profileId}`;
+  const sorted = items.sort((a, b) => b.timestamp - a.timestamp);
+  // 最多保留100条
+  const trimmed = sorted.slice(0, 100);
+  await kvPut(key, trimmed);
+}
+
+/**
+ * 更新单条观看进度（添加或更新）
+ */
+export async function updateProgressItem(profileId: string, item: WatchProgressItem): Promise<void> {
+  const items = await getWatchProgress(profileId);
+  const idx = items.findIndex(i => String(i.videoId) === String(item.videoId) && i.source === item.source);
+  if (idx !== -1) {
+    items[idx] = { ...items[idx], ...item, timestamp: Date.now() };
+  } else {
+    items.push({ ...item, timestamp: Date.now() });
+  }
+  await saveWatchProgress(profileId, items);
+}
+
+/**
+ * 删除单条观看进度
+ */
+export async function deleteProgressItem(profileId: string, videoId: string | number, source: string): Promise<boolean> {
+  const items = await getWatchProgress(profileId);
+  const filtered = items.filter(i => !(String(i.videoId) === String(videoId) && i.source === source));
+  if (filtered.length === items.length) return false;
+  await saveWatchProgress(profileId, filtered);
+  return true;
+}
+
+/**
+ * 清空某个账号的全部观看进度
+ */
+export async function clearWatchProgress(profileId: string): Promise<void> {
+  const key = `${PROGRESS_KEY_PREFIX}${profileId}`;
+  await kvPut(key, []);
+}

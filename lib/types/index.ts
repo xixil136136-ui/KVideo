@@ -1,5 +1,5 @@
 /**
- * Core type definitions for KVideo platform
+ * Core type definitions for NB影院 platform
  */
 
 // API Source Configuration

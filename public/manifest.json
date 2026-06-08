@@ -1,6 +1,6 @@
 {
-    "name": "KVideo - 视频聚合平台",
-    "short_name": "KVideo",
+    "name": "NB影院 - 在线影视平台",
+    "short_name": "NB影院",
     "description": "多源视频聚合搜索和播放平台",
     "start_url": "/",
     "display": "standalone",

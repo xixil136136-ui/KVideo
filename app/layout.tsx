@@ -1,6 +1,5 @@
 import React from 'react';
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AutoSync } from '@/components/AutoSync'; // <-- 引入了自动同步组件
@@ -58,16 +57,6 @@ async function AdKeywordsWrapper() {
   return <AdKeywordsInjector keywords={keywords} />;
 }
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
   title: siteConfig.title,
   description: siteConfig.description,
@@ -89,7 +78,7 @@ export default function RootLayout({
         {/* Apple PWA Support */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="KVideo" />
+        <meta name="apple-mobile-web-app-title" content="NB影院" />
         <link rel="apple-touch-icon" href="/icon.png" />
         {/* Theme Color (for browser address bar) */}
         <meta name="theme-color" content="#000000" />
@@ -97,7 +86,7 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`antialiased`}
         suppressHydrationWarning
       >
         <ThemeProvider>

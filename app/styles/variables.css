@@ -6,7 +6,7 @@
     --bg-color-light: #f2f4f7;
     --bg-image-light: none;
     --text-color-light: #1d1d1f;
-    --text-color-secondary-light: #6e6e73;
+    --text-color-secondary-light: #555558;
     --accent-color-light: #0056b3;
     --glass-bg-light: rgba(255, 255, 255, 0.95);
     --glass-border-light: rgba(0, 0, 0, 0.05);
@@ -15,8 +15,8 @@
     /* Dark Mode Palette */
     --bg-color-dark: #121212;
     --bg-image-dark: linear-gradient(120deg, #1a1a1a 0%, #121212 100%);
-    --text-color-dark: #f5f5f7;
-    --text-color-secondary-dark: #8e8e93;
+    --text-color-dark: #ffffff;
+    --text-color-secondary-dark: #a1a1a6;
     --accent-color-dark: #1A6DBF;
     --glass-bg-dark: rgba(30, 30, 30, 0.9);
     --glass-border-dark: rgba(255, 255, 255, 0.1);
@@ -74,5 +74,5 @@ body.dark,
     --shadow-color: var(--shadow-color-dark);
 
     --background: #121212;
-    --foreground: #f5f5f7;
+    --foreground: #ffffff;
 }
