@@ -1,14 +1,17 @@
-package com.kvideo.tv
+package com.kvideo
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -25,17 +28,16 @@ import android.net.http.SslError
 import android.widget.ProgressBar
 import android.widget.FrameLayout
 import android.widget.TextView
-import android.view.Gravity
 import androidx.activity.ComponentActivity
+import android.webkit.RenderProcessGoneDetail
 
 class MainActivity : ComponentActivity() {
 
     companion object {
-        /** Cloudflare 部署的 KVideo 网站，网页端已自带 PasswordGate 登录界面 */
         private const val KVIDEO_URL = "https://xixil.cc.cd"
-        private const val TAG = "KVideoTV"
-        // 白屏检测：如果页面10秒后还没渲染出内容，尝试重载
-        private const val WHITE_SCREEN_TIMEOUT_MS = 10000L
+        private const val TAG = "KVideo"
+        // 电视网速慢，给 25 秒超时
+        private const val WHITE_SCREEN_TIMEOUT_MS = 25000L
     }
 
     private lateinit var webView: WebView
@@ -47,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private var hasContentLoaded = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var whiteScreenChecker: Runnable? = null
+    private var isTvDevice = false
 
     inner class JSConsoleBridge {
         @JavascriptInterface
@@ -56,38 +59,69 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun error(msg: String) {
             Log.e(TAG, "[JS] $msg")
+            mainHandler.post {
+                if (!hasContentLoaded) {
+                    errorView.text = "JS: $msg"
+                    errorView.visibility = View.VISIBLE
+                }
+            }
         }
+        @JavascriptInterface
+        fun pageReady() {
+            Log.d(TAG, "[JS] 页面汇报就绪")
+            hasContentLoaded = true
+            mainHandler.post {
+                whiteScreenChecker?.let { mainHandler.removeCallbacks(it) }
+                errorView.visibility = View.GONE
+                progressBar.postDelayed({
+                    progressBar.visibility = View.GONE
+                }, 500)
+            }
+        }
+    }
+
+    /** 检测是否为电视设备 */
+    private fun isTv(context: Context): Boolean {
+        val uiMode = context.resources.configuration.uiMode and
+                Configuration.UI_MODE_TYPE_MASK
+        return uiMode == Configuration.UI_MODE_TYPE_TELEVISION
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 全屏沉浸模式
+        isTvDevice = isTv(this)
+
+        // 电视：全屏沉浸模式；手机：保持屏幕常亮
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        )
+        if (isTvDevice) {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+        }
 
         // 根布局
         rootLayout = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
         }
 
-        // 错误提示（隐藏）
+        // 错误提示
         errorView = TextView(this).apply {
             text = "加载中..."
             setTextColor(Color.parseColor("#FFCC00"))
-            textSize = 18f
+            textSize = if (isTvDevice) 18f else 16f
+            typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
+            setPadding(40, 60, 40, 40)
             layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.CENTER
@@ -99,7 +133,7 @@ class MainActivity : ComponentActivity() {
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                6
+                if (isTvDevice) 6 else 4
             ).apply {
                 gravity = Gravity.TOP
             }
@@ -117,7 +151,7 @@ class MainActivity : ComponentActivity() {
             )
             id = View.generateViewId()
 
-            // 开启远程调试（可连接 Chrome devtools）
+            // 开启远程调试
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 WebView.setWebContentsDebuggingEnabled(true)
             }
@@ -125,40 +159,44 @@ class MainActivity : ComponentActivity() {
             // 添加 JS 日志桥
             addJavascriptInterface(JSConsoleBridge(), "AndroidBridge")
 
-            // 硬件加速
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
-
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 loadWithOverviewMode = true
                 useWideViewPort = true
-                cacheMode = WebSettings.LOAD_DEFAULT
+                cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK // 优先缓存加速二次加载
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 databaseEnabled = true
                 allowContentAccess = true
                 allowFileAccess = false
                 loadsImagesAutomatically = true
                 blockNetworkImage = false
-                builtInZoomControls = false
-                displayZoomControls = false
 
-                // JS 引擎设置 - 兼容旧设备
+                // 安全浏览可能导致空白页（老电视 WebView 常见问题）
+                safeBrowsingEnabled = false
+
+                // 电视：禁用缩放；手机：支持双指缩放
+                builtInZoomControls = !isTvDevice
+                displayZoomControls = false
+                setSupportZoom(!isTvDevice)
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    // 允许混合内容
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 }
 
-                // TV UA：去掉 wv 标识，让网站识别为桌面 Chrome
+                // 清理 UA：去掉 wv 标识，电视版额外去掉 TV 关键词
                 val ua = settings.userAgentString
-                userAgentString = ua
-                    .replace("; wv", "")
-                    .replace(Regex("Version/\\d+(\\.\\d+)*"), "Chrome/120")
-                    .replace("Android 10", "Android 10")
-                    // 确保不包含 Android TV 标识以防被网站检测
-                    .replace(Regex("(?i)smart.?tv|android.?tv|tv|leakback"), "")
-                Log.d(TAG, "UA: $userAgentString")
+                val cleanUA = if (isTvDevice) {
+                    ua.replace(Regex(" wv"), "")
+                        .replace(Regex("Version/\\d+(\\.\\d+)*"), "Chrome/120")
+                        .replace(Regex("(?i)Leakback|SmartTV|Android TV"), "")
+                } else {
+                    ua.replace(Regex(" wv"), "")
+                        .replace(Regex("Version/\\d+(\\.\\d+)*"), "Chrome/120")
+                }
+                userAgentString = cleanUA.trim()
+                Log.d(TAG, "UA: $userAgentString | isTV: $isTvDevice")
             }
 
             // WebView 客户端
@@ -175,12 +213,14 @@ class MainActivity : ComponentActivity() {
                     whiteScreenChecker?.let { mainHandler.removeCallbacks(it) }
                     whiteScreenChecker = Runnable {
                         if (!hasContentLoaded && loadAttempts < maxLoadAttempts) {
-                            Log.w(TAG, "白屏检测触发 - 重试第 ${loadAttempts + 1} 次")
                             loadAttempts++
-                            view?.loadUrl(KVIDEO_URL)
+                            Log.w(TAG, "白屏检测触发 - 重试第 $loadAttempts 次")
+                            if (loadAttempts <= maxLoadAttempts) {
+                                view?.loadUrl(KVIDEO_URL)
+                            }
                         } else if (!hasContentLoaded) {
                             Log.e(TAG, "白屏检测 - 已达最大重试次数")
-                            showError("无法加载页面，请检查网络连接")
+                            showError("无法加载页面，请检查：\n1. 网络连接是否正常\n2. 电视 WebView 是否需要更新\n3. 科学上网是否开启")
                         }
                     }
                     mainHandler.postDelayed(whiteScreenChecker!!, WHITE_SCREEN_TIMEOUT_MS)
@@ -190,36 +230,59 @@ class MainActivity : ComponentActivity() {
                     super.onPageFinished(view, url)
                     Log.d(TAG, "Page finished: $url")
 
-                    // 页面加载完后，注入 JS 来检查页面是否真的渲染了内容
+                    // 注入 JS 错误捕获 + 就绪通知
                     view?.evaluateJavascript("""
                         (function() {
                             try {
-                                var body = document.body;
-                                var hasVisibleContent = body && 
-                                    (body.innerHTML.length > 100 || 
-                                     body.children.length > 1 ||
-                                     document.querySelector('input') !== null ||
-                                     document.querySelector('button') !== null);
-                                AndroidBridge.log('hasVisibleContent: ' + hasVisibleContent);
-                                return hasVisibleContent ? 'true' : 'false';
+                                // 捕获全局 JS 错误
+                                window.onerror = function(msg, source, line, col, error) {
+                                    var errMsg = msg + ' @ ' + (source||'') + ':' + line;
+                                    try { AndroidBridge.error(errMsg); } catch(e) {}
+                                    return true;
+                                };
+                                // 捕获未处理的 Promise 错误
+                                window.addEventListener('unhandledrejection', function(e) {
+                                    try { AndroidBridge.error('Unhandled: ' + (e.reason || 'unknown')); } catch(er) {}
+                                });
+                                // 检查内容是否已渲染
+                                var checkContent = function() {
+                                    var body = document.body;
+                                    if (body && body.innerHTML.length > 50) {
+                                        try { AndroidBridge.pageReady(); } catch(e) {}
+                                        return true;
+                                    }
+                                    return false;
+                                };
+                                // 立即检查
+                                if (checkContent()) return;
+                                // 等 React 渲染（最多等 30 秒）
+                                var retries = 0;
+                                var timer = setInterval(function() {
+                                    if (checkContent() || retries++ > 60) {
+                                        clearInterval(timer);
+                                        if (retries > 60) {
+                                            try { AndroidBridge.error('页面渲染超时'); } catch(e) {}
+                                        }
+                                    }
+                                }, 500);
                             } catch(e) {
-                                AndroidBridge.error(e.message);
-                                return 'false';
+                                try { AndroidBridge.error('Inject Error: ' + e.message); } catch(er) {}
                             }
                         })();
-                    """.trimIndent()) { result ->
-                        if (result == "\"true\"") {
-                            hasContentLoaded = true
-                            whiteScreenChecker?.let { mainHandler.removeCallbacks(it) }
-                            Log.d(TAG, "页面内容已渲染")
-                        }
-                    }
+                    """.trimIndent(), null)
 
+                    // 进度条自动隐藏
                     if (progressBar.progress >= 80) {
                         progressBar.postDelayed({
                             progressBar.visibility = View.GONE
                         }, 300)
                     }
+                }
+
+                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                    Log.e(TAG, "WebView 渲染进程崩溃！didCrash=${detail?.didCrash()}")
+                    showError("WebView 渲染进程崩溃\n请更新 WebView 组件或重启应用")
+                    return true
                 }
 
                 override fun onReceivedSslError(
@@ -242,17 +305,19 @@ class MainActivity : ComponentActivity() {
                     } else {
                         "未知错误"
                     }
-                    Log.e(TAG, "加载错误: $description")
+                    Log.e(TAG, "加载错误: $description (url=${request?.url})")
 
                     if (request?.isForMainFrame == true) {
                         if (loadAttempts < maxLoadAttempts) {
                             loadAttempts++
                             Log.d(TAG, "重试第 $loadAttempts 次...")
+                            showError("加载失败 ($description)\n${maxLoadAttempts - loadAttempts + 1} 秒后重试...")
                             view?.postDelayed({
+                                errorView.visibility = View.GONE
                                 view.loadUrl(KVIDEO_URL)
                             }, 2000)
                         } else {
-                            showError("页面加载失败: $description")
+                            showError("页面加载失败: $description\n请检查网络连接")
                         }
                     }
                 }
@@ -261,13 +326,11 @@ class MainActivity : ComponentActivity() {
                     view: WebView?,
                     request: WebResourceRequest?
                 ): Boolean {
-                    val url = request?.url?.toString() ?: return false
-                    // 允许在 WebView 内打开所有同源链接
-                    return false
+                    return false // 允许在 WebView 内打开所有链接
                 }
             }
 
-            // Chrome 客户端 — 进度条更新 + 控制台日志捕获
+            // Chrome 客户端
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     progressBar.progress = newProgress
@@ -308,9 +371,9 @@ class MainActivity : ComponentActivity() {
         progressBar.visibility = View.GONE
     }
 
-    // D-pad 中心键 → Enter，适配电视遥控器输入密码
+    // 电视遥控器 D-pad 中心键 → Enter，适配电视输入密码
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+        if (isTvDevice && keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
             webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
             return true
         }
@@ -318,7 +381,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+        if (isTvDevice && keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
             webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
             return true
         }

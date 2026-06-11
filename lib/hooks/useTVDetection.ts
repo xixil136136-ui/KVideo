@@ -1,6 +1,6 @@
 /**
  * useTVDetection
- * Detects if the user is on a TV/set-top-box browser.
+ * Detects if the user is on a TV/set-top-box browser or Android TV WebView.
  */
 
 import { useState, useEffect } from 'react';
@@ -19,6 +19,7 @@ const TV_USER_AGENT_PATTERNS = [
   /netcast/i, // LG NetCast
   /viera/i, // Panasonic Viera
   /hbbtv/i,
+  /leanback/i, // Android Leanback
 ];
 
 export function useTVDetection(): boolean {
@@ -34,6 +35,9 @@ export function useTVDetection(): boolean {
       setIsTV(true);
       return;
     }
+
+    // Detect Android WebView with AndroidBridge (KVideo Android app)
+    const hasAndroidBridge = typeof AndroidBridge !== 'undefined';
 
     // Fallback heuristic: large screen + no touch + low pixel density
     const isLargeScreen = window.innerWidth >= 1280;

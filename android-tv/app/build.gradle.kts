@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.kvideo.tv"
+    namespace = "com.kvideo"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.kvideo.tv"
+        applicationId = "com.kvideo"
         minSdk = 21
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.1.0"
+        versionCode = 5
+        versionName = "2.1.1"
     }
 
     signingConfigs {
@@ -52,4 +52,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.activity:activity-ktx:1.8.2")
     implementation("androidx.webkit:webkit:1.9.0")
+    implementation("androidx.tvprovider:tvprovider:1.1.0")
 }

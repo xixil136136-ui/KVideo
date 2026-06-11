@@ -5,7 +5,6 @@ import { getSession, setSession } from '@/lib/store/auth-store';
 import { useSubscriptionSync } from '@/lib/hooks/useSubscriptionSync';
 import { settingsStore } from '@/lib/store/settings-store';
 import { useIPTVStore } from '@/lib/store/iptv-store';
-import { Lock } from 'lucide-react';
 
 /**
  * Sync IPTV sources from environment variable.
@@ -186,54 +185,37 @@ export function PasswordGate({ children, hasAuth: initialHasAuth }: { children: 
 
     return (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--bg-color)] bg-[image:var(--bg-image)] text-[var(--text-color)] overflow-y-auto">
-            <div className="w-full max-w-md p-4 py-8">
-                {/* Centered Single Column Card */}
-                <div className="bg-[var(--glass-bg)] backdrop-blur-[25px] saturate-[180%] border border-[var(--glass-border)] rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-                    <div className="p-8 flex flex-col items-center gap-6">
-                        <div className="w-16 h-16 rounded-[var(--radius-full)] bg-[var(--accent-color)]/10 flex items-center justify-center text-[var(--accent-color)] mb-2 shadow-[var(--shadow-sm)] border border-[var(--glass-border)]">
-                            <Lock size={32} />
-                        </div>
-
-                        <div className="text-center space-y-2">
-                            <h2 className="text-2xl font-bold">请输入密码</h2>
-                            <p className="text-[var(--text-color-secondary)]">输入访问密码以继续使用</p>
-                        </div>
-
-                        <form
-                            id="password-form"
-                            onSubmit={handleUnlock}
-                            className="w-full space-y-4"
-                        >
-                            <div className="space-y-2">
-                                <input
-                                    type="password"
-                                    value={password}
-                                    onChange={(e) => {
-                                        setPassword(e.target.value);
-                                        setError('');
-                                    }}
-                                    placeholder="输入密码..."
-                                    className={`w-full px-4 py-3 rounded-[var(--radius-2xl)] bg-[var(--glass-bg)] border ${error ? 'border-red-500' : 'border-[var(--glass-border)]'
-                                        } focus:outline-none focus:border-[var(--accent-color)] focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent-color)_30%,transparent)] transition-all duration-[0.4s] cubic-bezier(0.2,0.8,0.2,1) text-[var(--text-color)] placeholder-[var(--text-color-secondary)]`}
-                                    autoFocus
-                                />
-                                {error && (
-                                    <p className="text-sm text-red-500 text-center animate-pulse">
-                                        {error}
-                                    </p>
-                                )}
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={isValidating}
-                                className="w-full py-3 px-4 bg-[var(--accent-color)] text-white font-bold rounded-[var(--radius-2xl)] hover:translate-y-[-2px] hover:brightness-110 shadow-[var(--shadow-sm)] hover:shadow-[0_4px_8px_var(--shadow-color)] active:translate-y-0 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {isValidating ? '验证中...' : '登录'}
-                            </button>
-                        </form>
-                    </div>
-                </div>
+            <div className="w-full max-w-sm p-4">
+                <form
+                    id="password-form"
+                    onSubmit={handleUnlock}
+                    className="w-full space-y-4"
+                >
+                    <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => {
+                            setPassword(e.target.value);
+                            setError('');
+                        }}
+                        placeholder="输入密码..."
+                        className={`w-full px-4 py-3 rounded-[var(--radius-2xl)] bg-[var(--glass-bg)] border ${error ? 'border-red-500' : 'border-[var(--glass-border)]'
+                            } focus:outline-none focus:border-[var(--accent-color)] focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent-color)_30%,transparent)] transition-all duration-[0.4s] cubic-bezier(0.2,0.8,0.2,1) text-[var(--text-color)] placeholder-[var(--text-color-secondary)]`}
+                        autoFocus
+                    />
+                    {error && (
+                        <p className="text-sm text-red-500 text-center animate-pulse">
+                            {error}
+                        </p>
+                    )}
+                    <button
+                        type="submit"
+                        disabled={isValidating}
+                        className="w-full py-3 px-4 bg-[var(--accent-color)] text-white font-bold rounded-[var(--radius-2xl)] hover:translate-y-[-2px] hover:brightness-110 shadow-[var(--shadow-sm)] hover:shadow-[0_4px_8px_var(--shadow-color)] active:translate-y-0 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isValidating ? '验证中...' : '登录'}
+                    </button>
+                </form>
             </div>
             <style jsx global>{`
         @keyframes shake {

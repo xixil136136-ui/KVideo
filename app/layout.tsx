@@ -89,6 +89,29 @@ export default function RootLayout({
         className={`antialiased`}
         suppressHydrationWarning
       >
+        {/* TV/旧设备兼容：在 React 加载前显示加载状态，防止白屏 */}
+        <div id="kv-loading" style={{display:'flex',position:'fixed',inset:0,zIndex:99999,background:'#000',color:'#888',alignItems:'center',justifyContent:'center',fontFamily:'sans-serif',fontSize:'16px',pointerEvents:'none' as any}}>
+          <div style={{textAlign:'center' as any}}>
+            <div style={{display:'inline-block',width:32,height:32,border:'3px solid #333',borderTopColor:'#fff',borderRadius:'50%',animation:'kvspin 1s linear infinite',marginBottom:12}} />
+            <div>加载中...</div>
+          </div>
+        </div>
+        <style dangerouslySetInnerHTML={{__html:'@keyframes kvspin{to{transform:rotate(360deg)}}#kv-loading.hidden{opacity:0;transition:opacity .3s}'}} />
+        <script dangerouslySetInnerHTML={{
+          __html: `(function(){
+            var el=document.getElementById('kv-loading');
+            var check=function(){
+              if(document.body && document.body.innerHTML.length>100){
+                el&&el.classList.add('hidden');
+                setTimeout(function(){el&&el.parentNode&&el.parentNode.removeChild(el)},500);
+              }else{
+                setTimeout(check,300);
+              }
+            };
+            setTimeout(check,500);
+            setTimeout(function(){el&&el.classList.add('hidden')},8000);
+          })();`
+        }} />
         <ThemeProvider>
           {/* 加入自动同步组件，它会在后台默默工作，我们放在 ThemeProvider 内部的最前面 */}
           <AutoSync />

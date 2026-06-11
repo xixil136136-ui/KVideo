@@ -113,7 +113,7 @@ function isEdgeRuntimeSafe(): boolean {
 
 // ============ Edge Runtime In-Memory Fallback ============
 
-const edgeMemory: { accounts?: AdminAccount[]; config?: AdminConfig } = {};
+const edgeMemory: { [key: string]: any } = {};
 
 // ============ Public API ============
 
