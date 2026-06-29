@@ -17,3 +17,6 @@ android-tv/captures/
 node_modules/
 .next/
 .vercel/
+
+# Wrangler
+.wrangler/

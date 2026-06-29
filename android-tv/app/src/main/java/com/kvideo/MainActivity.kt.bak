@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -19,7 +20,16 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -28,17 +38,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.appcompat.widget.SwitchCompat
-// 腾讯X5 TBS WebView 替代系统WebView
-import com.tencent.smtt.export.external.interfaces.ConsoleMessage
-import com.tencent.smtt.export.external.interfaces.SslError
-import com.tencent.smtt.export.external.interfaces.SslErrorHandler
-import com.tencent.smtt.export.external.interfaces.WebResourceError
-import com.tencent.smtt.export.external.interfaces.WebResourceRequest
-import com.tencent.smtt.sdk.QbSdk
-import com.tencent.smtt.sdk.WebChromeClient
-import com.tencent.smtt.sdk.WebSettings
-import com.tencent.smtt.sdk.WebView
-import com.tencent.smtt.sdk.WebViewClient
+import java.lang.reflect.Proxy as ReflectProxy
 
 class MainActivity : ComponentActivity() {
 
@@ -47,19 +47,7 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "KVideo"
         // Slower devices (Android < 8.0) get 60s timeout, faster ones 30s
         private val WHITE_SCREEN_TIMEOUT_MS = if (Build.VERSION.SDK_INT < 26) 60000L else 30000L
-
-        // 初始化腾讯X5 TBS内核（静态初始化，App启动时预加载）
-        init {
-            try {
-                // 设置TBS内核预热参数
-                val tbsSettings = java.util.HashMap<String, Any>()
-                tbsSettings["tbs_settings_use_speedy_classloader"] = true
-                tbsSettings["tbs_settings_use_dexloader_service"] = true
-                QbSdk.initTbsSettings(tbsSettings)
-            } catch (e: Exception) {
-                Log.w(TAG, "TBS settings init failed: ${e.message}")
-            }
-        }
+        private const val MIN_WEBVIEW_VERSION = 55
     }
 
     private lateinit var webView: WebView
@@ -69,13 +57,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var splashView: ImageView
     private lateinit var settingsBtn: Button
     private var loadAttempts = 0
-    private val maxLoadAttempts = 4
+    private val maxLoadAttempts = 4  // One extra retry for old/slow devices
     private var hasContentLoaded = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var whiteScreenChecker: Runnable? = null
     private var isTvDevice = false
-    private var isTbsReady = false  // TBS内核是否加载成功
-    private var tbsInitAttempted = false
+    private var webViewVersion = 0
     private lateinit var proxySettings: ProxySettings
 
     inner class JSConsoleBridge {
@@ -107,9 +94,10 @@ class MainActivity : ComponentActivity() {
         }
         @JavascriptInterface
         fun webViewTooOld() {
+            val ver = webViewVersion
             mainHandler.post {
                 showError(
-                    "⚠️ 系统WebView版本过旧\n\n" +
+                    "⚠️ 系统WebView版本过旧 ($ver)\n\n" +
                     "当前网站需要较新的WebView支持\n\n" +
                     "建议：\n" +
                     "1️⃣ 在电视应用商店搜索更新\n" +
@@ -118,9 +106,9 @@ class MainActivity : ComponentActivity() {
                     "3️⃣ 如无法更新，换安卓9+盒子\n\n" +
                     "按确定键仍尝试加载"
                 )
-            }   // close mainHandler.post
-        }   // close webViewTooOld
-    }   // close JSConsoleBridge
+            }
+        }
+    }
 
     private fun isTv(context: Context): Boolean {
         val uiMode = context.resources.configuration.uiMode and
@@ -139,45 +127,68 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * TBS X5内核加载失败时重试初始化。
+     * Detect WebView version via reflection on WebViewFactory.
+     * Android 6.0 TVs often ship with very old Chromium WebView (v50-60).
      */
-    private fun retryTbsInit() {
-        Log.d(TAG, "重试TBS内核初始化...")
-        showError("正在下载TBS渲染内核，请稍候...")
-        if (::webView.isInitialized) {
-            try { rootLayout.removeView(webView) } catch (_: Exception) {}
+    private fun detectWebViewVersion(): Int {
+        return try {
+            val wvfClass = Class.forName("android.webkit.WebViewFactory")
+            val method = wvfClass.getDeclaredMethod("getLoadedPackageInfo")
+            method.isAccessible = true
+            val pkgInfo = method.invoke(null)
+            val versionNameField = pkgInfo.javaClass.getDeclaredField("versionName")
+            versionNameField.isAccessible = true
+            val versionStr = versionNameField.get(pkgInfo) as? String ?: "0"
+            val majorVer = versionStr.split(".").firstOrNull()?.toIntOrNull() ?: 0
+            Log.d(TAG, "WebView version: $versionStr (major=$majorVer)")
+            majorVer
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not detect WebView version: ${e.message}")
+            0
         }
-        tbsInitAttempted = false
-        isTbsReady = false
-        QbSdk.initX5Environment(applicationContext, object : QbSdk.PreInitCallback {
-            override fun onViewInitFinished(isSucc: Boolean) {
-                isTbsReady = isSucc
-                Log.d(TAG, "TBS retry init: isSucc=$isSucc (0=success)")
-                if (isTbsReady) {
-                    startLoading()
-                } else {
-                    showError(
-                        "⚠️ TBS内核重试仍失败\n\n" +
-                        "此电视的Android 6.0系统可能不兼容TBS内核\n\n" +
-                        "建议解决方案：\n" +
-                        "1️⃣ 在电视设置中更新系统WebView\n" +
-                        "2️⃣ 安装当贝市场→搜索WebView更新\n" +
-                        "3️⃣ 如无法解决，考虑升级电视系统\n\n" +
-                        "点击右上角⚙配置代理后重试"
-                    )
-                }
-            }
-
-            override fun onCoreInitFinished() {
-                Log.d(TAG, "TBS retry core init done")
-            }
-        })
     }
 
     /**
-     * Attempt to set proxy for TBS WebView.
-     * TBS X5内核使用Chromium网络栈，通过JVM级代理设置 + DNS解析影响TBS行为。
-     * 同时尝试TBS特有的代理设置方式。
+     * Generate a list of UA strings to try in fallback order.
+     * Old WebViews may not render well with fake Chrome/124 UA.
+     */
+    private fun generateFallbackUAs(baseUA: String): List<String> {
+        val uas = mutableListOf<String>()
+
+        // 1. Modern Chrome (default) - works if WebView is new enough
+        val modern = baseUA
+            .replace(Regex(" wv"), "")
+            .replace(Regex("Version/\\d+(\\.\\d+)*"), "Chrome/124")
+            .replace(Regex("(?i)Leanback|SmartTV|Android TV|TV"), "")
+            .trim()
+        uas.add(modern)
+
+        // 2. Conservative Chrome for old WebViews - match actual WebView version
+        if (webViewVersion > 0) {
+            val conservative = baseUA
+                .replace(Regex(" wv"), "")
+                .replace(Regex("Version/\\d+(\\.\\d+)*"), "Chrome/$webViewVersion")
+                .replace(Regex("(?i)Leanback|SmartTV|Android TV|TV"), "")
+                .trim()
+            if (conservative != modern) uas.add(conservative)
+        }
+
+        // 3. AppleWebKit fallback - some old sites work better with Safari-like UA
+        val safariLike = baseUA
+            .replace(Regex(" wv"), "")
+            .replace(Regex("Version/\\d+(\\.\\d+)*"), "Version/13.0")
+            .replace(Regex("Chrome/\\S+"), "Safari/604.1")
+            .replace(Regex("(?i)Leanback|SmartTV|Android TV|TV"), "")
+            .trim()
+        uas.add(safariLike)
+
+        return uas.distinct()
+    }
+
+    /**
+     * Attempt to set proxy on Chromium WebView via reflection.
+     * This is the approach used by many Chinese Android streaming apps
+     * and works on most Android 5+ devices with Chromium WebView.
      */
     private fun applyProxyToWebView() {
         if (!proxySettings.enabled) return
@@ -185,7 +196,7 @@ class MainActivity : ComponentActivity() {
         val host = proxySettings.host
         val port = proxySettings.port
 
-        Log.d(TAG, "Applying proxy for TBS: $host:$port")
+        Log.d(TAG, "Applying WebView proxy: $host:$port")
 
         // Method 1: System properties (affects Java URLConnection)
         System.setProperty("http.proxyHost", host)
@@ -216,25 +227,37 @@ class MainActivity : ComponentActivity() {
             Log.w(TAG, "ProxySelector.setDefault failed: ${e.message}")
         }
 
-        // Method 3: TBS X5内核的代理设置（通过QbSdk）
+        // Method 3: Reflection on WebView's internal setProxy (Chromium WebView)
         try {
-            val cm = Class.forName("com.tencent.smtt.sdk.QbSdk")
-            // 通过QbSdk的静态方法设置代理 - 使用反射尝试多种方式
+            val setProxyMethod = WebView::class.java.getDeclaredMethod(
+                "setProxy",
+                String::class.java,
+                Int::class.javaPrimitiveType,
+                String::class.java
+            )
+            setProxyMethod.isAccessible = true
+            setProxyMethod.invoke(webView, host, port, null)
+            Log.d(TAG, "WebView setProxy via reflection: OK")
+        } catch (e: NoSuchMethodException) {
+            Log.d(TAG, "WebView.setProxy not available (modern Chromium), trying WebViewProvider...")
             try {
-                val setProxyMethod = cm.getDeclaredMethod(
+                val getProvider = WebView::class.java.getDeclaredMethod("getWebViewProvider")
+                getProvider.isAccessible = true
+                val provider = getProvider.invoke(webView)
+                val providerSetProxy = provider.javaClass.getDeclaredMethod(
                     "setProxy",
-                    Context::class.java,
                     String::class.java,
-                    Int::class.javaPrimitiveType
+                    Int::class.javaPrimitiveType,
+                    String::class.java
                 )
-                setProxyMethod.isAccessible = true
-                setProxyMethod.invoke(null, this, host, port)
-                Log.d(TAG, "TBS setProxy via QbSdk: OK")
-            } catch (e1: NoSuchMethodException) {
-                Log.d(TAG, "TBS QbSdk.setProxy not available")
+                providerSetProxy.isAccessible = true
+                providerSetProxy.invoke(provider, host, port, null)
+                Log.d(TAG, "WebViewProvider setProxy via reflection: OK")
+            } catch (e2: Exception) {
+                Log.w(TAG, "All WebView proxy reflection failed: ${e2.message}")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "TBS proxy setting failed: ${e.message}")
+            Log.w(TAG, "WebView proxy reflection error: ${e.message}")
         }
     }
 
@@ -247,245 +270,20 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * 在TBS初始化完成后创建WebView并加载页面
-     */
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun startLoading() {
-        Log.d(TAG, "startLoading: 创建WebView并加载页面")
-
-        loadAttempts = 0
-        hasContentLoaded = false
-
-        // 创建WebView（此时TBS已就绪，会使用TBS内核）
-        webView = WebView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            id = View.generateViewId()
-
-            // TBS内核不支持 setWebContentsDebuggingEnabled
-
-            // JS bridge
-            addJavascriptInterface(JSConsoleBridge(), "AndroidBridge")
-
-            settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-                mediaPlaybackRequiresUserGesture = false
-                loadWithOverviewMode = true
-                useWideViewPort = true
-                cacheMode = WebSettings.LOAD_DEFAULT
-                databaseEnabled = true
-                allowContentAccess = true
-                allowFileAccess = false
-                loadsImagesAutomatically = true
-                blockNetworkImage = false
-
-                // TV: 禁用缩放手势避免误触
-                builtInZoomControls = !isTvDevice
-                displayZoomControls = false
-                setSupportZoom(!isTvDevice)
-
-                // TV字体略大
-                if (isTvDevice) {
-                    textZoom = 110
-                    // TV上用更兼容的UA
-                    val baseUA = settings.userAgentString
-                    userAgentString = baseUA
-                        .replace(Regex(" wv"), "")
-                        .replace(Regex("Chrome/\\d+\\.\\d+\\.\\d+\\.\\d+"), "Chrome/124.0.0.0")
-                }
-
-                Log.d(TAG, "TBS WebView created | isTV: $isTvDevice")
-            }
-
-            webViewClient = object : WebViewClient() {
-                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                    super.onPageStarted(view, url, favicon)
-                    hasContentLoaded = false
-                    progressBar.visibility = View.VISIBLE
-                    progressBar.isIndeterminate = true
-                    progressBar.progress = 0
-                    errorView.visibility = View.GONE
-                    Log.d(TAG, "Loading: $url")
-
-                    // White screen detection timer
-                    whiteScreenChecker?.let { mainHandler.removeCallbacks(it) }
-                    whiteScreenChecker = Runnable {
-                        if (!hasContentLoaded && loadAttempts < maxLoadAttempts) {
-                            loadAttempts++
-                            Log.w(TAG, "白屏检测触发 - 重试第 $loadAttempts 次")
-                            progressBar.isIndeterminate = false
-                            progressBar.progress = 10
-                            if (loadAttempts <= maxLoadAttempts) {
-                                view?.loadUrl(KVIDEO_URL)
-                            }
-                        } else if (!hasContentLoaded) {
-                            Log.e(TAG, "白屏检测 - 已达最大重试次数")
-                            showError(
-                                "⚠️ 页面加载超时\n\n" +
-                                "请检查：\n" +
-                                "1️⃣ 网络连接是否正常\n" +
-                                "2️⃣ VPN/代理是否已开启（点击⚙设置）\n" +
-                                "3️⃣ 网站是否正常运行\n\n" +
-                                "按确定键重试"
-                            )
-                        }
-                    }
-                    mainHandler.postDelayed(whiteScreenChecker!!, WHITE_SCREEN_TIMEOUT_MS)
-                }
-
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    super.onPageFinished(view, url)
-                    Log.d(TAG, "Page finished: $url")
-
-                    // Inject JS error capture + content-ready notification
-                    view?.evaluateJavascript("""(function() {
-    'use strict';
-    try {
-        window.onerror = function(msg, source, line, col, error) {
-            var errMsg = '';
-            if (typeof msg === 'string') { errMsg += msg; }
-            if (source) { errMsg += ' @ ' + source + ':' + (line || 0); }
-            try { AndroidBridge.error(errMsg); } catch(e) {}
-            return true;
-        };
-        var checkContent = function() {
-            var body = document.body;
-            if (body && typeof body.innerHTML === 'string' && body.innerHTML.length > 50) {
-                try { AndroidBridge.pageReady(); } catch(e) {}
-                return true;
-            }
-            return false;
-        };
-        if (checkContent()) return;
-        var retries = 0;
-        var maxRetries = 120;
-        var timer = setInterval(function() {
-            if (checkContent() || retries++ >= maxRetries) {
-                clearInterval(timer);
-            }
-        }, 500);
-    } catch(e) {
-        try { AndroidBridge.error('OLD_WEBVIEW'); } catch(er) {}
-    }
-})();""".trimIndent(), null)
-
-                    // Auto-hide progress bar after a delay
-                    if (progressBar.progress >= 80) {
-                        progressBar.postDelayed({
-                            progressBar.visibility = View.GONE
-                        }, 300)
-                    }
-                }
-
-                override fun onReceivedSslError(
-                    view: WebView?,
-                    handler: SslErrorHandler?,
-                    error: SslError?
-                ) {
-                    Log.w(TAG, "SSL 错误: ${error?.toString()}")
-                    handler?.proceed()
-                }
-
-                override fun onReceivedError(
-                    view: WebView?,
-                    request: WebResourceRequest?,
-                    error: WebResourceError?
-                ) {
-                    val description = error?.description?.toString() ?: "未知错误"
-                    Log.e(TAG, "加载错误: $description (url=${request?.url})")
-
-                    if (request?.isForMainFrame == true) {
-                        view?.stopLoading()
-                        if (loadAttempts < maxLoadAttempts) {
-                            loadAttempts++
-                            Log.d(TAG, "重试第 $loadAttempts 次...")
-                            showError("加载失败 ($description)\n${maxLoadAttempts - loadAttempts + 1} 秒后重试...")
-                            view?.postDelayed({
-                                errorView.visibility = View.GONE
-                                view.loadUrl(KVIDEO_URL)
-                            }, 2000)
-                        } else {
-                            showError(
-                                "⚠️ 页面加载失败\n\n$description\n\n" +
-                                "请检查：\n" +
-                                "1️⃣ 网络连接是否正常\n" +
-                                "2️⃣ VPN/代理是否已开启（点击⚙设置）\n" +
-                                "3️⃣ 网站是否正常运行\n\n" +
-                                "按确定键重试"
-                            )
-                        }
-                    }
-                }
-
-                override fun shouldOverrideUrlLoading(
-                    view: WebView?,
-                    request: WebResourceRequest?
-                ): Boolean {
-                    return false
-                }
-            }
-
-            webChromeClient = object : WebChromeClient() {
-                override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                    if (progressBar.isIndeterminate && newProgress > 5) {
-                        progressBar.isIndeterminate = false
-                    }
-                    progressBar.progress = newProgress
-                    if (newProgress >= 95) {
-                        progressBar.postDelayed({
-                            progressBar.visibility = View.GONE
-                        }, 200)
-                    }
-                }
-
-                override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
-                    val level = when (msg?.messageLevel()) {
-                        ConsoleMessage.MessageLevel.ERROR -> "E"
-                        ConsoleMessage.MessageLevel.WARNING -> "W"
-                        else -> "D"
-                    }
-                    Log.d(TAG, "[CONSOLE $level] ${msg?.message()} (${msg?.sourceId()}:${msg?.lineNumber()})")
-                    return true
-                }
-            }
-
-            // Apply proxy BEFORE loading if configured
-            applyProxyToWebView()
-        }
-
-        // 添加到根布局（在子视图最底层）
-        rootLayout.addView(webView, 0)
-        // 把splash放在WebView上层可见
-        splashView.bringToFront()
-        progressBar.bringToFront()
-        errorView.bringToFront()
-        settingsBtn.bringToFront()
-
-        // 检查网络后加载
-        if (!isNetworkAvailable()) {
-            showError(
-                "⚠️ 无网络连接\n\n" +
-                "请检查：\n" +
-                "1️⃣ WiFi 是否已连接\n" +
-                "2️⃣ 路由器是否正常工作\n" +
-                "3️⃣ VPN/代理是否已开启（点击⚙设置）\n\n" +
-                "连接网络后按确定键重试"
-            )
-        } else {
-            webView.loadUrl(KVIDEO_URL)
-        }
-    }
-
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         proxySettings = ProxySettings(this)
+
         isTvDevice = isTv(this)
+
+        // Detect WebView version for old-device handling
+        webViewVersion = detectWebViewVersion()
+        val isOldWebView = webViewVersion > 0 && webViewVersion < MIN_WEBVIEW_VERSION
+        if (isOldWebView) {
+            Log.w(TAG, "旧版WebView检测到: v$webViewVersion (推荐 >= $MIN_WEBVIEW_VERSION)")
+        }
 
         // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -537,9 +335,9 @@ class MainActivity : ComponentActivity() {
             setOnClickListener { showProxyDialog() }
         }
 
-        // Error text
+        // Error text with scrollable content for long messages
         errorView = TextView(this).apply {
-            text = "启动TBS内核..."
+            text = "加载中..."
             setTextColor(Color.parseColor("#FFCC00"))
             textSize = if (isTvDevice) 20f else 16f
             typeface = Typeface.MONOSPACE
@@ -551,7 +349,7 @@ class MainActivity : ComponentActivity() {
             ).apply {
                 gravity = Gravity.CENTER
             }
-            visibility = View.VISIBLE
+            visibility = View.GONE
         }
 
         // Progress bar
@@ -564,47 +362,342 @@ class MainActivity : ComponentActivity() {
             }
             max = 100
             progress = 0
+            isIndeterminate = false
             visibility = View.VISIBLE
             isIndeterminate = true
         }
 
-        // 添加UI元素（先不加WebView，等TBS就绪再加）
+        // WebView
+        webView = WebView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            id = View.generateViewId()
+
+            // Remote debugging
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                WebView.setWebContentsDebuggingEnabled(true)
+            }
+
+            // JS bridge
+            addJavascriptInterface(JSConsoleBridge(), "AndroidBridge")
+
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                loadWithOverviewMode = true
+                useWideViewPort = true
+                // Cache aggressively on old/slow devices
+                cacheMode = if (isOldWebView) {
+                    WebSettings.LOAD_CACHE_ELSE_NETWORK
+                } else {
+                    WebSettings.LOAD_DEFAULT
+                }
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                databaseEnabled = true
+                allowContentAccess = true
+                allowFileAccess = false
+                loadsImagesAutomatically = true
+                blockNetworkImage = false
+                // API 27+ only: safeBrowsingEnabled was added in Android 8.0
+                // On Android 6.0 TVs, calling this directly causes NoSuchMethodError crash
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    safeBrowsingEnabled = false
+                }
+                // Disable gesture-based scaling on TV to avoid accidental zoom
+                builtInZoomControls = if (isOldWebView) false else !isTvDevice
+                displayZoomControls = false
+                setSupportZoom(!isTvDevice)
+
+                // Font size slightly larger for TV
+                if (isTvDevice) {
+                    textZoom = 110
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                }
+
+                // Smart UA selection based on WebView version
+                val baseUA = settings.userAgentString
+                val uaList = generateFallbackUAs(baseUA)
+                val selectedUA = if (isOldWebView && uaList.size > 1) {
+                    // Use conservative UA for old WebViews
+                    uaList[1]
+                } else {
+                    uaList[0]
+                }
+                userAgentString = selectedUA
+                Log.d(TAG, "UA: $userAgentString | isTV: $isTvDevice | WebView v$webViewVersion")
+            }
+
+            webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    hasContentLoaded = false
+                    progressBar.visibility = View.VISIBLE
+                    progressBar.isIndeterminate = true
+                    progressBar.progress = 0
+                    errorView.visibility = View.GONE
+                    Log.d(TAG, "Loading: $url")
+
+                    // White screen detection timer
+                    whiteScreenChecker?.let { mainHandler.removeCallbacks(it) }
+                    whiteScreenChecker = Runnable {
+                        if (!hasContentLoaded && loadAttempts < maxLoadAttempts) {
+                            loadAttempts++
+                            Log.w(TAG, "白屏检测触发 - 重试第 $loadAttempts 次")
+                            progressBar.isIndeterminate = false
+                            progressBar.progress = 10
+                            if (loadAttempts <= maxLoadAttempts) {
+                                // Rotate UA on each retry for old WebViews
+                                if (isOldWebView && loadAttempts <= 3) {
+                                    val uaList = generateFallbackUAs(settings.userAgentString)
+                                    if (loadAttempts - 1 < uaList.size) {
+                                        settings.userAgentString = uaList[loadAttempts - 1]
+                                        Log.d(TAG, "Retry with UA[$loadAttempts]: ${settings.userAgentString}")
+                                    }
+                                }
+                                view?.loadUrl(KVIDEO_URL)
+                            }
+                        } else if (!hasContentLoaded) {
+                            Log.e(TAG, "白屏检测 - 已达最大重试次数")
+                            val oldWebViewMsg = if (isOldWebView) {
+                                "\n\n🔧 系统WebView版本过旧\n建议更新或安装新版WebView"
+                            } else ""
+                            showError(
+                                "⚠️ 页面加载超时\n\n" +
+                                "请检查：\n" +
+                                "1️⃣ 网络连接是否正常\n" +
+                                "2️⃣ VPN/代理是否已开启\n" +
+                                "3️⃣ WebView是否需要更新$oldWebViewMsg\n\n" +
+                                "点击右上角⚙配置代理\n" +
+                                "或按确定键重试"
+                            )
+                        }
+                    }
+                    mainHandler.postDelayed(whiteScreenChecker!!, WHITE_SCREEN_TIMEOUT_MS)
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    Log.d(TAG, "Page finished: $url")
+
+                    // Inject JS error capture + content-ready notification
+                    // Using ES5-compatible syntax for old WebViews
+                    view?.evaluateJavascript("""(function() {
+    'use strict';
+    try {
+        // ES5-safe error handler
+        window.onerror = function(msg, source, line, col, error) {
+            var errMsg = '';
+            if (typeof msg === 'string') { errMsg += msg; }
+            if (source) { errMsg += ' @ ' + source + ':' + (line || 0); }
+            try { AndroidBridge.error(errMsg); } catch(e) {}
+            return true;
+        };
+        // Check if basic ES6 features exist (Promise is a good proxy)
+        var hasPromise = (typeof Promise !== 'undefined');
+        var hasSymbol  = (typeof Symbol !== 'undefined');
+        var hasFetch   = (typeof fetch !== 'undefined');
+        if (!hasPromise || !hasSymbol) {
+            var missing = [];
+            if (!hasPromise) missing.push('Promise');
+            if (!hasSymbol)  missing.push('Symbol');
+            if (!hasFetch)   missing.push('fetch');
+            AndroidBridge.log('Old WebView: missing ' + missing.join(', '));
+            // Still try to detect content - the site might have fallbacks
+        }
+        var checkContent = function() {
+            var body = document.body;
+            if (body && typeof body.innerHTML === 'string' && body.innerHTML.length > 50) {
+                try { AndroidBridge.pageReady(); } catch(e) {}
+                return true;
+            }
+            return false;
+        };
+        if (checkContent()) return;
+        var retries = 0;
+        var maxRetries = 90;  // 45 seconds for slow devices
+        var timer = setInterval(function() {
+            if (checkContent() || retries++ >= maxRetries) {
+                clearInterval(timer);
+                if (retries >= maxRetries) {
+                    try { AndroidBridge.error('Page render timeout') } catch(e) {
+                        // Fallback if encoding fails on old WebView
+                        try { AndroidBridge.error('') } catch(er) {}
+                    }
+                }
+            }
+        }, 500);
+        // Also try to detect if body is empty after page load
+        setTimeout(function() {
+            if (!checkContent()) {
+                try { AndroidBridge.log(''); } catch(e) {}
+            }
+        }, 10000);
+    } catch(e) {
+        // Last resort - can't even inject, WebView is extremely old
+        try { AndroidBridge.error('OLD_WEBVIEW'); } catch(er) {
+            try { AndroidBridge.error(''); } catch(er2) {}
+        }
+    }
+})();""".trimIndent(), null)
+
+                    // Auto-hide progress bar after a delay
+                    if (progressBar.progress >= 80) {
+                        progressBar.postDelayed({
+                            progressBar.visibility = View.GONE
+                        }, 300)
+                    }
+                }
+
+                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                    Log.e(TAG, "WebView 渲染进程崩溃！didCrash=${detail?.didCrash()}")
+                    showError("WebView 渲染进程崩溃\n请更新 WebView 组件或重启应用")
+                    return true
+                }
+
+                override fun onReceivedSslError(
+                    view: WebView?,
+                    handler: SslErrorHandler?,
+                    error: SslError?
+                ) {
+                    Log.w(TAG, "SSL 错误: ${error?.toString()}")
+                    handler?.proceed()
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?
+                ) {
+                    val description = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        error?.description?.toString() ?: "未知错误"
+                    } else {
+                        "未知错误"
+                    }
+                    Log.e(TAG, "加载错误: $description (url=${request?.url})")
+
+                    if (request?.isForMainFrame == true) {
+                        view?.stopLoading()
+                        if (loadAttempts < maxLoadAttempts) {
+                            loadAttempts++
+                            Log.d(TAG, "重试第 $loadAttempts 次...")
+                            showError("加载失败 ($description)\n${maxLoadAttempts - loadAttempts + 1} 秒后重试...")
+                            view?.postDelayed({
+                                errorView.visibility = View.GONE
+                                // Try different UA on retry
+                                if (isOldWebView && loadAttempts <= 3) {
+                                    val uaList = generateFallbackUAs(settings.userAgentString)
+                                    if (loadAttempts - 1 < uaList.size) {
+                                        settings.userAgentString = uaList[loadAttempts - 1]
+                                        Log.d(TAG, "Error retry with UA[$loadAttempts]: ${settings.userAgentString}")
+                                    }
+                                }
+                                view.loadUrl(KVIDEO_URL)
+                            }, 2000)
+                        } else {
+                            val oldWebViewMsg = if (isOldWebView) {
+                                "\n\n🔧 提示：系统WebView版本过旧\n建议在应用商店搜索更新\n\"Android System WebView\""
+                            } else ""
+                            showError(
+                                "⚠️ 页面加载失败\n\n$description$oldWebViewMsg\n\n" +
+                                "请检查：\n" +
+                                "1️⃣ 网络连接是否正常\n" +
+                                "2️⃣ VPN/代理是否已开启\n" +
+                                "3️⃣ 网站是否正常运行\n\n" +
+                                "点击右上角⚙配置代理\n" +
+                                "或按确定键重试"
+                            )
+                        }
+                    }
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    return false
+                }
+            }
+
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    if (progressBar.isIndeterminate && newProgress > 5) {
+                        progressBar.isIndeterminate = false
+                    }
+                    progressBar.progress = newProgress
+                    if (newProgress >= 95) {
+                        progressBar.postDelayed({
+                            progressBar.visibility = View.GONE
+                        }, 200)
+                    }
+                }
+
+                override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
+                    val level = when (msg?.messageLevel()) {
+                        ConsoleMessage.MessageLevel.ERROR -> "E"
+                        ConsoleMessage.MessageLevel.WARNING -> "W"
+                        else -> "D"
+                    }
+                    Log.d(TAG, "[CONSOLE $level] ${msg?.message()} (${msg?.sourceId()}:${msg?.lineNumber()})")
+                    return true
+                }
+            }
+
+            // Apply proxy BEFORE loading if configured
+            applyProxyToWebView()
+
+            // Show WebView version warning if too old
+            if (isOldWebView) {
+                showError(
+                    "⚠️ 系统 WebView 版本过旧 (v$webViewVersion)\n\n" +
+                    "当前电视的 WebView 版本较旧\n" +
+                    "网站可能无法正常渲染\n\n" +
+                    "建议操作：\n" +
+                    "1️⃣ 打开应用商店搜索更新\n" +
+                    "   \"Android System WebView\"\n" +
+                    "2️⃣ 或安装当贝市场/沙发管家\n" +
+                    "   更新系统组件\n" +
+                    "3️⃣ 直接点确定尝试加载\n\n" +
+                    "白屏等待时间已延长至60秒\n" +
+                    "并会自动切换UA重试" + "\n\n" +
+                    "\u23CE 确定键尝试加载"
+                )
+                // Still try to load after showing warning
+                postDelayed({
+                    if (!hasContentLoaded) {
+                        errorView.visibility = View.GONE
+                        loadUrl(KVIDEO_URL)
+                    }
+                }, 8000)
+            } else {
+                // Check network before loading
+                if (!isNetworkAvailable()) {
+                    showError(
+                        "⚠️ 无网络连接\n\n" +
+                        "请检查：\n" +
+                        "1️⃣ WiFi 是否已连接\n" +
+                        "2️⃣ 路由器是否正常工作\n" +
+                        "3️⃣ VPN/代理是否已开启\n\n" +
+                        "连接网络后按确定键重试"
+                    )
+                } else {
+                    loadUrl(KVIDEO_URL)
+                }
+            }
+        }
+
+        rootLayout.addView(webView)
         rootLayout.addView(splashView)
         rootLayout.addView(progressBar)
         rootLayout.addView(errorView)
         rootLayout.addView(settingsBtn)
         setContentView(rootLayout)
-
-        // 初始化腾讯X5 TBS内核 - 带回调检测是否加载成功
-        Log.d(TAG, "开始初始化TBS内核...")
-        tbsInitAttempted = true
-        QbSdk.initX5Environment(applicationContext, object : QbSdk.PreInitCallback {
-            override fun onViewInitFinished(isSucc: Boolean) {
-                isTbsReady = isSucc
-                Log.d(TAG, "TBS init finished: isSucc=$isSucc (${if (isTbsReady) "TBS已就绪" else "已回退系统WebView"})")
-                if (!isTbsReady) {
-                    Log.w(TAG, "TBS内核加载失败 (isSucc=$isSucc)")
-                    showError(
-                        "⚠️ TBS内核加载失败\n\n" +
-                        "首次启动需下载TBS渲染内核\n" +
-                        "请保持网络畅通，等待下载完成\n\n" +
-                        "如持续失败，请检查：\n" +
-                        "1️⃣ 网络连接是否正常\n" +
-                        "2️⃣ VPN/代理是否已开启（点击⚙设置）\n" +
-                        "3️⃣ 电视时间日期是否正确\n\n" +
-                        "按确定键重试加载"
-                    )
-                } else {
-                    Log.d(TAG, "TBS内核加载成功！开始加载页面")
-                    startLoading()
-                }
-            }
-
-            override fun onCoreInitFinished() {
-                Log.d(TAG, "TBS core init done")
-            }
-        })   // close initX5Environment + init call
-    }   // close onCreate
+    }
 
     private fun showError(message: String) {
         errorView.apply {
@@ -663,16 +756,14 @@ class MainActivity : ComponentActivity() {
         dialog.show()
     }
 
-    // TV remote D-pad center -> Enter
+    // TV remote D-pad center → Enter
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (isTvDevice && keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
             if (errorView.visibility == View.VISIBLE || !hasContentLoaded) {
                 retryLoad()
                 return true
             }
-            if (::webView.isInitialized) {
-                webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            }
+            webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -683,9 +774,7 @@ class MainActivity : ComponentActivity() {
             if (errorView.visibility == View.VISIBLE || !hasContentLoaded) {
                 return true
             }
-            if (::webView.isInitialized) {
-                webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-            }
+            webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -695,34 +784,16 @@ class MainActivity : ComponentActivity() {
         loadAttempts = 0
         hasContentLoaded = false
         errorView.visibility = View.GONE
-
-        // 如果TBS之前没加载成功，尝试重新初始化TBS
-        if (tbsInitAttempted && !isTbsReady) {
-            if (::webView.isInitialized) {
-                try {
-                    webView.destroy()
-                    rootLayout.removeView(webView)
-                } catch (_: Exception) {}
-            }
-            retryTbsInit()
-            return
-        }
-
         splashView.visibility = View.VISIBLE
         progressBar.visibility = View.VISIBLE
         progressBar.isIndeterminate = true
         applyProxyToWebView()
-        if (::webView.isInitialized) {
-            webView.loadUrl(KVIDEO_URL)
-        } else {
-            // 如果WebView还没创建（极少数情况），直接走startLoading
-            startLoading()
-        }
+        webView.loadUrl(KVIDEO_URL)
     }
 
     @Deprecated("Use OnBackPressedDispatcher")
     override fun onBackPressed() {
-        if (::webView.isInitialized && webView.canGoBack()) {
+        if (webView.canGoBack()) {
             webView.goBack()
         } else {
             @Suppress("DEPRECATION")
@@ -732,9 +803,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         whiteScreenChecker?.let { mainHandler.removeCallbacks(it) }
-        if (::webView.isInitialized) {
-            webView.destroy()
-        }
+        webView.destroy()
         super.onDestroy()
     }
 }

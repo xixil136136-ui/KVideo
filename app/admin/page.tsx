@@ -122,6 +122,12 @@ export default function AdminPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dashboardStats, setDashboardStats] = useState<{
+    totalAccounts: number;
+    totalDevices: number;
+    viewerAccounts: number;
+    adminAccounts: number;
+  } | null>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem('kvideo-admin-session');
@@ -130,6 +136,37 @@ export default function AdminPage() {
       setSession(JSON.parse(stored));
     }
   }, []);
+
+  // After login, fetch stats
+  useEffect(() => {
+    if (session && session.role === 'super_admin') {
+      fetch('/api/admin/account-device', {
+        headers: { authorization: `Bearer ${sessionStorage.getItem('kvideo-admin-token')}` },
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.valid && data.deviceInfos) {
+            let totalDevices = 0;
+            let viewerAccounts = 0;
+            let adminAccounts = 0;
+            data.deviceInfos.forEach((di: any) => {
+              if (di.isUnlimited) adminAccounts++;
+              else {
+                viewerAccounts++;
+                totalDevices += di.deviceCount;
+              }
+            });
+            setDashboardStats({
+              totalAccounts: data.deviceInfos.length,
+              totalDevices,
+              viewerAccounts,
+              adminAccounts,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [session]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -290,6 +327,14 @@ export default function AdminPage() {
         <div style={styles.grid}>
           <DashboardCard title="登录状态" value="已登录" color="#22c55e" />
           <DashboardCard title="角色" value={roleLabel} color="#6366f1" />
+          {dashboardStats && session.role === 'super_admin' && (
+            <>
+              <DashboardCard title="总账号数" value={`${dashboardStats.totalAccounts}`} color="#8b5cf6" />
+              <DashboardCard title="普通账号" value={`${dashboardStats.viewerAccounts}`} color="#f59e0b" />
+              <DashboardCard title="管理员" value={`${dashboardStats.adminAccounts}`} color="#6366f1" />
+              <DashboardCard title="已注册设备" value={`${dashboardStats.totalDevices}`} color="#22c55e" />
+            </>
+          )}
           <DashboardCard title="会话有效期" value="24小时" color="#f59e0b" />
         </div>
 
@@ -300,6 +345,8 @@ export default function AdminPage() {
             <li>前往 <strong style={{ color: 'rgba(255,255,255,0.9)' }}>账号管理</strong> 创建/编辑/删除管理员账号</li>
             <li>每个账号可设置不同的角色权限</li>
             <li>创建账号时可同时设为 Premium 密码</li>
+            <li>普通账号可单独设置设备登录限制（默认5台）</li>
+            <li>管理员和超级管理员不受设备数量限制</li>
             <li>修改后无需重启，立即生效</li>
           </ul>
         </div>

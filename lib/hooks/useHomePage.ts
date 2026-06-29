@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useSearchCache } from '@/lib/hooks/useSearchCache';
 import { useParallelSearch } from '@/lib/hooks/useParallelSearch';
 import { useSubscriptionSync } from '@/lib/hooks/useSubscriptionSync';
@@ -8,7 +8,6 @@ import { userSourcesStore } from '@/lib/store/user-sources-store';
 
 export function useHomePage() {
     useSubscriptionSync();
-    const router = useRouter();
     const searchParams = useSearchParams();
     const { loadFromCache, saveToCache } = useSearchCache();
     const hasLoadedCache = useRef(false);
@@ -20,8 +19,10 @@ export function useHomePage() {
     const [currentSortBy, setCurrentSortBy] = useState<SortOption>('default');
 
     const onUrlUpdate = useCallback((q: string) => {
-        router.replace(`/?q=${encodeURIComponent(q)}`, { scroll: false });
-    }, [router]);
+        if (typeof window !== 'undefined') {
+            window.history.replaceState(null, '', `/?q=${encodeURIComponent(q)}`);
+        }
+    }, []);
 
     // Search stream hook
     const {
@@ -157,8 +158,10 @@ export function useHomePage() {
         setQuery('');
         hasSearchedWithSourcesRef.current = false;
         resetSearch();
-        router.replace('/', { scroll: false });
-    }, [resetSearch, router]);
+        if (typeof window !== 'undefined') {
+            window.history.replaceState(null, '', '/');
+        }
+    }, [resetSearch]);
 
     return {
         query,

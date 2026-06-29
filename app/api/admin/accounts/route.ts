@@ -66,6 +66,11 @@ export async function POST(request: NextRequest) {
       updatedAt: Date.now(),
     };
 
+    // 支持设置设备登录限制（viewer 角色有效，admin/super_admin 不受限制）
+    if (typeof body.maxDevices === 'number' && body.maxDevices >= 0) {
+      account.maxDevices = body.maxDevices;
+    }
+
     // 支持设置过期时间（30天=月卡, 90天=季卡, 365天=年卡）
     if (body.duration && typeof body.duration === 'number' && body.duration > 0) {
       account.expiresAt = Date.now() + body.duration * 24 * 60 * 60 * 1000;
@@ -126,6 +131,12 @@ export async function PUT(request: NextRequest) {
     if (body.password) updates.password = body.password;
     if (body.name) updates.name = body.name;
     if (body.role) updates.role = body.role;
+    // 编辑设备限制（0=禁止新设备，null/undefined=默认5）
+    if (typeof body.maxDevices === 'number' && body.maxDevices >= 0) {
+      updates.maxDevices = body.maxDevices;
+    } else if (body.maxDevices === null || body.maxDevices === undefined) {
+      updates.maxDevices = undefined; // 恢复默认
+    }
     // 编辑时也可以设置/续期过期时间
     if (body.duration && typeof body.duration === 'number' && body.duration > 0) {
       updates.expiresAt = Date.now() + body.duration * 24 * 60 * 60 * 1000;

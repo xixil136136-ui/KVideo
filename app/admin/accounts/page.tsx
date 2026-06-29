@@ -9,6 +9,14 @@ interface Account {
   createdAt: number;
   updatedAt: number;
   expiresAt?: number;
+  maxDevices?: number; // 设备限制数
+}
+
+interface DeviceInfo {
+  accountId: string;
+  deviceCount: number;
+  deviceLimit: number;
+  isUnlimited: boolean;
 }
 
 const DURATION_PLANS = [
@@ -24,14 +32,18 @@ export default function AdminAccountsPage() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Device info map: accountId → DeviceInfo
+  const [deviceInfos, setDeviceInfos] = useState<Record<string, DeviceInfo>>({});
+
   // New account form
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     password: '',
-    role: 'viewer',
+    role: 'viewer' as string,
     duration: 0, // 0=永久
     setAsPremium: false,
+    maxDevices: 5, // 默认设备限制
   });
 
   // Edit account
@@ -41,6 +53,7 @@ export default function AdminAccountsPage() {
     role: string;
     password: string;
     expiresAt?: number;
+    maxDevices?: number;
   } | null>(null);
 
   useEffect(() => {
@@ -58,6 +71,27 @@ export default function AdminAccountsPage() {
 
   const getToken = () => sessionStorage.getItem('kvideo-admin-token');
 
+  const fetchDeviceInfos = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/account-device', {
+        headers: { authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.valid && data.deviceInfos) {
+        const map: Record<string, DeviceInfo> = {};
+        data.deviceInfos.forEach((di: any) => {
+          map[di.accountId] = { 
+            accountId: di.accountId, 
+            deviceCount: di.deviceCount, 
+            deviceLimit: di.deviceLimit,
+            isUnlimited: di.isUnlimited,
+          };
+        });
+        setDeviceInfos(map);
+      }
+    } catch {}
+  }, []);
+
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -68,6 +102,7 @@ export default function AdminAccountsPage() {
       const data = await res.json();
       if (data.valid) {
         setAccounts(data.accounts);
+        fetchDeviceInfos();
       } else {
         setError(data.message || '获取列表失败');
       }
@@ -76,7 +111,7 @@ export default function AdminAccountsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchDeviceInfos]);
 
   useEffect(() => {
     if (session) fetchAccounts();
@@ -90,19 +125,24 @@ export default function AdminAccountsPage() {
     setSuccessMsg('');
 
     try {
+      const body: any = { ...formData };
+      // Viewer 角色才传设备限制，admin/super_admin 不受限制
+      if (formData.role === 'viewer') {
+        body.maxDevices = formData.maxDevices;
+      }
       const res = await fetch('/api/admin/accounts', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           authorization: `Bearer ${getToken()}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.valid) {
         setSuccessMsg('账号创建成功！');
         setShowForm(false);
-        setFormData({ name: '', password: '', role: 'viewer', duration: 0, setAsPremium: false });
+        setFormData({ name: '', password: '', role: 'viewer', duration: 0, setAsPremium: false, maxDevices: 5 });
         fetchAccounts();
       } else {
         setError(data.message || '创建失败');
@@ -123,6 +163,16 @@ export default function AdminAccountsPage() {
       if (editData.name) body.name = editData.name;
       if (editData.password) body.password = editData.password;
       if (editData.role) body.role = editData.role;
+
+      // 传设备限制（admin 角色不传，保持无限制）
+      const account = accounts.find(a => a.id === editData.id);
+      const isAdminRole = editData.role === 'admin' || editData.role === 'super_admin';
+      const wasAdminRole = account && (account.role === 'admin' || account.role === 'super_admin');
+      if (!isAdminRole && !wasAdminRole) {
+        body.maxDevices = editData.maxDevices;
+      } else if (isAdminRole) {
+        body.maxDevices = undefined; // 无限制
+      }
 
       const res = await fetch('/api/admin/accounts', {
         method: 'PUT',
@@ -233,6 +283,22 @@ export default function AdminAccountsPage() {
     return { text: `剩余 ${days} 天`, color: '#22c55e', badge: `${days}天` };
   };
 
+  /** 设备限制显示文案 */
+  const deviceLimitLabel = (account: Account) => {
+    const di = deviceInfos[account.id];
+    const isUnlimited = di?.isUnlimited || account.role === 'super_admin' || account.role === 'admin';
+    if (isUnlimited) {
+      return { text: '设备: 无限制', color: '#6366f1' };
+    }
+    const count = di?.deviceCount ?? '?';
+    const limit = account.maxDevices ?? 5;
+    const isFull = typeof count === 'number' && count >= limit;
+    return {
+      text: `设备: ${count}/${limit}`,
+      color: isFull ? '#f59e0b' : 'rgba(255,255,255,0.4)',
+    };
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -336,7 +402,10 @@ export default function AdminAccountsPage() {
               <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
                 <select
                   value={formData.role}
-                  onChange={e => setFormData({ ...formData, role: e.target.value })}
+                  onChange={e => {
+                    const newRole = e.target.value;
+                    setFormData({ ...formData, role: newRole });
+                  }}
                   style={selectStyle}
                 >
                   <option value="viewer">查看者 (viewer)</option>
@@ -344,6 +413,26 @@ export default function AdminAccountsPage() {
                   <option value="super_admin">超级管理员 (super_admin)</option>
                 </select>
               </div>
+
+              {/* Device Limit — 仅 viewer 角色 */}
+              {formData.role === 'viewer' && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', marginBottom: '8px' }}>
+                    设备登录限制（admin/super_admin 不限制）：
+                  </p>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={formData.maxDevices}
+                      onChange={e => setFormData({ ...formData, maxDevices: Math.max(0, parseInt(e.target.value) || 0) })}
+                      style={{ ...inputStyle, width: '120px' }}
+                    />
+                    <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px' }}>台设备（0=禁止新设备登录）</span>
+                  </div>
+                </div>
+              )}
 
               {/* Duration / Pricing */}
               <div style={{ marginBottom: '16px' }}>
@@ -467,13 +556,42 @@ export default function AdminAccountsPage() {
               </div>
               <select
                 value={editData.role}
-                onChange={e => setEditData({ ...editData, role: e.target.value })}
+                onChange={e => {
+                  const newRole = e.target.value;
+                  setEditData({ ...editData, role: newRole });
+                }}
                 style={{ ...selectStyle, marginBottom: '16px' }}
               >
                 <option value="viewer">查看者 (viewer)</option>
                 <option value="admin">管理员 (admin)</option>
                 <option value="super_admin">超级管理员 (super_admin)</option>
               </select>
+
+              {/* 设备限制 — 编辑时仅 viewer 角色显示 */}
+              {(editData.role === 'viewer') && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', marginBottom: '8px' }}>
+                    设备登录限制：
+                  </p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={50}
+                    value={editData.maxDevices ?? 5}
+                    onChange={e => setEditData({ ...editData, maxDevices: Math.max(0, parseInt(e.target.value) || 0) })}
+                    style={{ ...inputStyle, width: '120px' }}
+                  />
+                  <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', marginLeft: '8px' }}>台设备（0=禁止新设备）</span>
+                </div>
+              )}
+
+              {/* Admin 角色提示 */}
+              {(editData.role === 'admin' || editData.role === 'super_admin') && (
+                <p style={{ color: 'rgba(99,102,241,0.6)', fontSize: '13px', marginBottom: '12px' }}>
+                  🔓 管理员和超级管理员不受设备登录数量限制
+                </p>
+              )}
+
               {editData.expiresAt && (
                 <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', marginBottom: '12px' }}>
                   过期时间：{formatDate(editData.expiresAt)}
@@ -537,6 +655,7 @@ export default function AdminAccountsPage() {
             {accounts.map((account) => {
               const expiry = getExpiryStatus(account);
               const isExpired = account.expiresAt && Date.now() > account.expiresAt;
+              const devLabel = deviceLimitLabel(account);
               return (
                 <div key={account.id} style={{
                   background: isExpired ? 'rgba(255,68,68,0.03)' : 'rgba(255,255,255,0.03)',
@@ -579,6 +698,17 @@ export default function AdminAccountsPage() {
                       </span>
                       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '12px' }}>
                         创建: {formatDate(account.createdAt)}
+                      </span>
+                      {/* Device Info Badge */}
+                      <span style={{
+                        fontSize: '12px',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        background: `${devLabel.color}18`,
+                        color: devLabel.color,
+                        fontWeight: 500,
+                      }}>
+                        {devLabel.text}
                       </span>
                       {/* Expiry Badge */}
                       <span style={{
@@ -648,6 +778,7 @@ export default function AdminAccountsPage() {
                         role: account.role,
                         password: '',
                         expiresAt: account.expiresAt,
+                        maxDevices: account.maxDevices,
                       })}
                       style={{
                         padding: '6px 14px',

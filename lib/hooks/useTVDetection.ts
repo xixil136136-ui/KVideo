@@ -37,7 +37,10 @@ export function useTVDetection(): boolean {
     }
 
     // Detect Android WebView with AndroidBridge (KVideo Android app)
-    const hasAndroidBridge = typeof AndroidBridge !== 'undefined';
+    if (typeof AndroidBridge !== 'undefined') {
+      setIsTV(true);
+      return;
+    }
 
     // Fallback heuristic: large screen + no touch + low pixel density
     const isLargeScreen = window.innerWidth >= 1280;

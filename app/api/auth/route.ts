@@ -127,20 +127,34 @@ async function checkDynamicAccounts(password: string): Promise<AccountEntry | nu
 
 /**
  * 检查设备数量限制，返回 null = 通过，否则返回拒绝响应
+ * 会根据账号角色判断：admin/super_admin 不限制
  */
-async function checkDeviceLimit(password: string, deviceId: string | undefined | null): Promise<NextResponse | null> {
+async function checkDeviceLimit(
+  password: string,
+  deviceId: string | undefined | null,
+  accountRole?: string | null,
+  accountMaxDevices?: number | null,
+): Promise<NextResponse | null> {
   if (!deviceId || typeof deviceId !== 'string') {
     return null; // 无 deviceId 则跳过检查（向后兼容）
   }
+
+  // admin/super_admin 不限制设备数量
+  if (accountRole === 'super_admin' || accountRole === 'admin') {
+    return null;
+  }
+
   try {
     const { registerDevice } = await import('@/lib/admin-storage');
     const result = await registerDevice(password, deviceId);
     if (result.deviceLimitReached) {
+      const limit = result.deviceLimit === Infinity ? '无限制' : `${result.deviceLimit}台`;
       return NextResponse.json({
         valid: false,
         deviceLimitReached: true,
         deviceCount: result.deviceCount,
-        message: `该密码已绑定 ${result.deviceCount} 台设备，已达上限（最多5台）`,
+        deviceLimit: result.deviceLimit,
+        message: `该账号已绑定 ${result.deviceCount} 台设备，已达上限（最多${limit}）`,
       });
     }
   } catch {}
@@ -225,8 +239,8 @@ export async function POST(request: NextRequest) {
 
     // 1. Check admin password (env var)
     if (effectiveAdminPassword && password === effectiveAdminPassword) {
-      // 设备数量检查
-      const deviceBlocked = await checkDeviceLimit(password, deviceId);
+      // 设备数量检查（管理员不限制）
+      const deviceBlocked = await checkDeviceLimit(password, deviceId, 'super_admin');
       if (deviceBlocked) return deviceBlocked;
 
       // Seed KV with this admin account on first login
@@ -248,8 +262,8 @@ export async function POST(request: NextRequest) {
     const accounts = parseAccounts();
     for (const account of accounts) {
       if (password === account.password) {
-        // 设备数量检查
-        const deviceBlocked = await checkDeviceLimit(password, deviceId);
+        // 设备数量检查（传角色信息）
+        const deviceBlocked = await checkDeviceLimit(password, deviceId, account.role);
         if (deviceBlocked) return deviceBlocked;
 
         const profileId = await generateSessionToken(account.password, account.name, account.role);
@@ -269,8 +283,8 @@ export async function POST(request: NextRequest) {
       const { verifyAccount } = await import('@/lib/admin-storage');
       const found = await verifyAccount(password);
       if (found) {
-        // 设备数量检查
-        const deviceBlocked = await checkDeviceLimit(password, deviceId);
+        // 设备数量检查（传角色信息）
+        const deviceBlocked = await checkDeviceLimit(password, deviceId, found.role);
         if (deviceBlocked) return deviceBlocked;
 
         const profileId = await generateSessionToken(found.id || found.password, found.name, found.role);

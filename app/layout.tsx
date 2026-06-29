@@ -5,7 +5,6 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { AutoSync } from '@/components/AutoSync'; // <-- 引入了自动同步组件
 import { TVProvider } from "@/lib/contexts/TVContext";
 import { TVNavigationInitializer } from "@/components/TVNavigationInitializer";
-import { Analytics } from "@vercel/analytics/react";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { getEnvVar, hasEnvVar } from "@/lib/env";
 import { PasswordGate } from "@/components/PasswordGate";
@@ -14,6 +13,7 @@ import { AdKeywordsInjector } from "@/components/AdKeywordsInjector";
 import { BackToTop } from "@/components/ui/BackToTop";
 import { ScrollPositionManager } from "@/components/ScrollPositionManager";
 import { LocaleProvider } from "@/components/LocaleProvider";
+import { HideLoadingScreen } from "@/components/HideLoadingScreen";
 import fs from 'fs';
 import path from 'path';
 
@@ -89,9 +89,33 @@ export default function RootLayout({
         className={`antialiased`}
         suppressHydrationWarning
       >
-
+        {/* TV/旧设备兼容：React 加载前显示加载状态，防止白屏；水合后由脚本自动移除 */}
+        <div id="kv-loading" className="kv-loading">
+          <div style={{textAlign:'center'}}>
+            <div className="kv-spinner" />
+            <div>加载中...</div>
+          </div>
+        </div>
+        <script dangerouslySetInnerHTML={{
+          __html: `(function(){
+            var el=document.getElementById('kv-loading');
+            if(!el)return;
+            // 检查 React 根节点是否已水合（body 内出现 React 特有的 DOM 结构）
+            var check=function(){
+              var root=document.querySelector('[id^="__next"]') || document.querySelector('[data-nextjs-root]');
+              if(document.querySelector('[class*="theme"]') || document.querySelector('[class*="search"]')){
+                el.classList.add('hidden');
+              }else{
+                setTimeout(check,200);
+              }
+            };
+            setTimeout(check,100); // 首次检查，给 React 启动时间
+            setTimeout(function(){el.classList.add('hidden')},3000); // 最晚 3 秒强制隐藏，防止永驻加载中
+          })();`
+        }} />
         <ThemeProvider>
           {/* 加入自动同步组件，它会在后台默默工作，我们放在 ThemeProvider 内部的最前面 */}
+          <HideLoadingScreen />
           <AutoSync />
           <LocaleProvider />
 
@@ -104,7 +128,6 @@ export default function RootLayout({
               <ScrollPositionManager />
             </PasswordGate>
           </TVProvider>
-          <Analytics />
           <ServiceWorkerRegister />
         </ThemeProvider>
 

@@ -276,7 +276,7 @@ export async function updatePremiumPassword(newPassword: string): Promise<void> 
 
 // ============ 设备注册管理 ============
 
-const MAX_DEVICES_PER_PASSWORD = 5;
+const DEFAULT_MAX_DEVICES = 5;
 
 interface DeviceRegistry {
   [password: string]: string[]; // password → [deviceId1, deviceId2, ...]
@@ -321,25 +321,54 @@ async function saveDeviceRegistry(registry: DeviceRegistry): Promise<void> {
 }
 
 /**
- * 注册设备到密码下
- * 返回 { success: boolean, deviceLimitReached: boolean, deviceCount: number }
+ * 获取某个密码对应的账号信息（用于设备限制判断）
  */
-export async function registerDevice(password: string, deviceId: string): Promise<{
+async function getAccountByPassword(password: string): Promise<AdminAccount | null> {
+  const accounts = await getAccounts();
+  return accounts.find(a => a.password === password) || null;
+}
+
+/**
+ * 获取某个账号允许的最大设备数
+ * - super_admin / admin: 无限制（返回 Infinity）
+ * - viewer: 取 account.maxDevices 或默认值
+ */
+export function getAccountMaxDevices(account: AdminAccount | null): number {
+  if (!account) return DEFAULT_MAX_DEVICES;
+  if (account.role === 'super_admin' || account.role === 'admin') return Infinity;
+  return account.maxDevices ?? DEFAULT_MAX_DEVICES;
+}
+
+/**
+ * 注册设备到密码下（按账号角色和 maxDevices 判断限制）
+ * 返回 { success, deviceLimitReached, deviceCount, deviceLimit }
+ */
+export async function registerDevice(password: string, deviceId: string, account?: AdminAccount | null): Promise<{
   success: boolean;
   deviceLimitReached: boolean;
   deviceCount: number;
+  deviceLimit: number;
 }> {
+  // 如果没传 account，尝试从密码查找
+  const acc = account !== undefined ? account : await getAccountByPassword(password);
+  const maxDevices = getAccountMaxDevices(acc);
+
+  // 无限制（admin/super_admin）
+  if (maxDevices === Infinity) {
+    return { success: true, deviceLimitReached: false, deviceCount: 0, deviceLimit: Infinity };
+  }
+
   const registry = await getDeviceRegistry();
   const devices = registry[password] || [];
 
   // 设备已注册过
   if (devices.includes(deviceId)) {
-    return { success: true, deviceLimitReached: false, deviceCount: devices.length };
+    return { success: true, deviceLimitReached: false, deviceCount: devices.length, deviceLimit: maxDevices };
   }
 
   // 检查是否已达上限
-  if (devices.length >= MAX_DEVICES_PER_PASSWORD) {
-    return { success: false, deviceLimitReached: true, deviceCount: devices.length };
+  if (devices.length >= maxDevices) {
+    return { success: false, deviceLimitReached: true, deviceCount: devices.length, deviceLimit: maxDevices };
   }
 
   // 注册新设备
@@ -347,7 +376,22 @@ export async function registerDevice(password: string, deviceId: string): Promis
   registry[password] = devices;
   await saveDeviceRegistry(registry);
 
-  return { success: true, deviceLimitReached: false, deviceCount: devices.length };
+  return { success: true, deviceLimitReached: false, deviceCount: devices.length, deviceLimit: maxDevices };
+}
+
+/**
+ * 获取某个账号已注册设备数量和限制
+ */
+export async function getAccountDeviceInfo(password: string, account?: AdminAccount | null): Promise<{
+  deviceCount: number;
+  deviceLimit: number;
+  devices: string[];
+}> {
+  const registry = await getDeviceRegistry();
+  const devices = registry[password] || [];
+  const acc = account !== undefined ? account : await getAccountByPassword(password);
+  const deviceLimit = getAccountMaxDevices(acc);
+  return { deviceCount: devices.length, deviceLimit, devices };
 }
 
 /**
